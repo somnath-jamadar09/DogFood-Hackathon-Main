@@ -53,8 +53,8 @@ app.use('/api/', apiRateLimiter);
 app.get('/api/v1/health', (req, res) => {
   res.status(200).json({
     status: 'healthy',
-    service: 'api',
     timestamp: new Date().toISOString(),
+    service: 'api',
     uptimeSeconds: Math.floor(process.uptime()),
     version: '1.0.0',
     airGapped: true,

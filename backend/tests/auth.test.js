@@ -6,6 +6,8 @@ describe('Auth & Health Endpoint Tests', () => {
     const res = await request(app).get('/api/v1/health');
     expect(res.statusCode).toEqual(200);
     expect(res.body.status).toEqual('healthy');
+    expect(res.body.service).toEqual('api');
+    expect(res.body.timestamp).toBeDefined();
     expect(res.body.airGapped).toBe(true);
   });
 
