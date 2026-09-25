@@ -40,7 +40,7 @@ exports.createTeam = async (req, res, next) => {
     const team = await Team.create({
       name: name.trim(),
       track,
-      captainId: req.user._id,
+      captain: req.user._id,
       members: [req.user._id],
       joinCode,
     });

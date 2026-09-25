@@ -12,26 +12,42 @@ const TeamSchema = new mongoose.Schema(
     },
     joinCode: {
       type: String,
-      required: true,
+      required: [true, 'Join code is required'],
       unique: true,
       uppercase: true,
-      length: 6,
+      trim: true,
+      minlength: [6, 'Join code must be 6 characters'],
+      maxlength: [6, 'Join code must be 6 characters'],
+      match: [/^[A-Z0-9]{6}$/, 'Join code must be 6 uppercase alphanumeric characters'],
       index: true,
     },
-    captainId: {
+    captain: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
+      required: [true, 'Team captain is required'],
+      alias: 'captainId',
     },
-    members: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-      },
-    ],
+    members: {
+      type: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+        },
+      ],
+      validate: [
+        {
+          validator: function (val) {
+            return !val || val.length <= 4;
+          },
+          message: 'A team cannot exceed 4 members.',
+        },
+      ],
+      default: [],
+    },
     track: {
       type: String,
       required: [true, 'Competition track is required'],
+      trim: true,
       index: true,
     },
     hasSubmitted: {
@@ -41,6 +57,8 @@ const TeamSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   }
 );
 
@@ -54,3 +72,4 @@ TeamSchema.pre('save', function (next) {
 });
 
 module.exports = mongoose.model('Team', TeamSchema);
+
