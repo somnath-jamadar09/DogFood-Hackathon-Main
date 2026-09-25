@@ -1,0 +1,45 @@
+# Dependency directories
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# Python virtual environment & cache
+__pycache__/
+*.py[cod]
+*$py.class
+judging-service/__pycache__/
+judging-service/*/__pycache__/
+judging-service/*/*/__pycache__/
+.pytest_cache/
+.venv/
+env/
+venv/
+
+# Build artifacts
+dist/
+frontend/dist/
+build/
+
+# Logs & Database data
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+mongo_data/
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Multer uploads (preserve folder, ignore contents)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# IDE & OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

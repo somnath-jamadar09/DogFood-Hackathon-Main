@@ -1,0 +1,125 @@
+version: '3.8'
+
+networks:
+  dogfood-net:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  mongo_data:
+    driver: local
+  uploads_data:
+    driver: local
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: dogfood-mongodb
+    restart: unless-stopped
+    networks:
+      - dogfood-net
+    volumes:
+      - mongo_data:/data/db
+      - ./seed/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    environment:
+      MONGO_INITDB_DATABASE: dogfood
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+          cpus: '1.0'
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  judging-service:
+    build:
+      context: ./judging-service
+      dockerfile: Dockerfile
+    container_name: dogfood-judging
+    restart: unless-stopped
+    networks:
+      - dogfood-net
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ENVIRONMENT=production
+      - HOST=0.0.0.0
+      - PORT=8000
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+          cpus: '1.0'
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dogfood-api
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    networks:
+      - dogfood-net
+    volumes:
+      - uploads_data:/app/uploads
+    environment:
+      - PORT=5000
+      - NODE_ENV=production
+      - MONGO_URI=mongodb://mongodb:27017/dogfood
+      - JUDGING_SERVICE_URL=http://judging-service:8000
+      - JWT_SECRET=raptors-offline-cryptographic-master-key-2026
+      - JWT_EXPIRES_IN=1h
+      - REFRESH_SECRET=raptors-refresh-token-secret-salt-2026
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+          cpus: '1.0'
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      judging-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/api/v1/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: dogfood-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    networks:
+      - dogfood-net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 5s
+      timeout: 3s
+      retries: 3

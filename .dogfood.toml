@@ -1,0 +1,93 @@
+# Dogfood 2026 Hackathon Test Harness Specification
+[project]
+name = "dogfood-2026"
+title = "Dogfood 2026 — Self-Hosted Air-Gapped Hackathon Platform"
+version = "1.0.0"
+target_event = "Hackathon Raptors 2026"
+authors = ["Somnath", "Falguni", "Om Apar"]
+license = "MIT"
+
+[architecture]
+runtime = "docker-compose"
+air_gapped = true
+zero_external_dependencies = true
+network = "dogfood-net"
+
+[services.frontend]
+container = "dogfood-frontend"
+port = 3000
+healthcheck = "http://localhost:3000"
+type = "spa"
+framework = "react-vite"
+
+[services.api]
+container = "dogfood-api"
+port = 5000
+healthcheck = "http://localhost:5000/api/v1/health"
+type = "rest"
+runtime = "node20"
+
+[services.judging_service]
+container = "dogfood-judging"
+port = 8000
+internal_only = true
+healthcheck = "http://judging-service:8000/health"
+type = "microservice"
+runtime = "python3.11"
+
+[services.database]
+container = "dogfood-mongodb"
+port = 27017
+engine = "mongodb-7.0"
+database = "dogfood"
+
+[tiers.t1_core]
+name = "Tier 1: Core Platform Foundation"
+status = "complete"
+endpoints = [
+  "POST /api/v1/auth/register",
+  "POST /api/v1/auth/login",
+  "GET /api/v1/auth/me",
+  "POST /api/v1/teams",
+  "POST /api/v1/teams/join",
+  "GET /api/v1/teams/my-team",
+  "POST /api/v1/submissions",
+  "POST /api/v1/submissions/finalize",
+  "GET /api/v1/submissions/gallery"
+]
+
+[tiers.t2_judging]
+name = "Tier 2: Rubrics, Assignment, Score Isolation & Normalization"
+status = "complete"
+endpoints = [
+  "GET /api/v1/judging/assigned",
+  "POST /api/v1/judging/scores",
+  "GET /api/v1/judging/scores/:scoreId",
+  "POST /api/v1/admin/assign-judges",
+  "POST /api/v1/admin/normalize-scores",
+  "GET /api/v1/admin/leaderboard",
+  "GET /api/v1/admin/export/csv"
+]
+
+[tiers.t3_public]
+name = "Tier 3: Sybil-Resistant Community Voting & Audit Trail"
+status = "complete"
+endpoints = [
+  "POST /api/v1/votes",
+  "GET /api/v1/admin/audit-logs"
+]
+
+[tiers.t4_stretch]
+name = "Tier 4: Bradley-Terry Pairwise Preference Ranking"
+status = "complete"
+endpoints = [
+  "POST /api/v1/pairwise-rank"
+]
+
+[verification]
+command_up = "docker compose up --build -d"
+command_down = "docker compose down -v"
+test_backend = "npm test --prefix backend"
+test_judging = "pytest judging-service/tests"
+egress_check = "docker exec dogfood-api sh -c 'nc -zv -w 2 8.8.8.8 53 || echo EGRESS_BLOCKED_OK'"
+report_output = "acceptance-report.txt"

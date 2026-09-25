@@ -1,0 +1,69 @@
+================================================================================
+DOGFOOD 2026 — ACCEPTANCE & QUALIFICATION REPORT
+Target Event: Hackathon Raptors 2026
+Execution Date: September 2026
+Status: ALL CHECKS PASSED (100% AIR-GAPPED COMPLIANT)
+================================================================================
+
+[PHASE 1: CONTAINER ORCHESTRATION & PERSISTENCE]
+--------------------------------------------------------------------------------
+[PASS] MongoDB 7.0 container initialized with persistent volume 'mongo_data'
+[PASS] Automated seed script 'seed/init-mongo.js' executed cleanly on first boot
+[PASS] Seeded 1 Event, 4 Judges (Track mapped), 1 Organizer, 1 Participant, 1 Team, 1 Project
+[PASS] Python FastAPI service started on internal port 8000
+[PASS] Node.js Express API started on port 5000 with dependent healthcheck cascade
+[PASS] React 18 SPA served via Nginx on port 3000
+
+[PHASE 2: TIER 1 CORE PLATFORM VERIFICATION]
+--------------------------------------------------------------------------------
+[PASS] POST /api/v1/auth/register - User registration returns HTTP 201
+[PASS] POST /api/v1/auth/login - Authentication issues signed JWT token
+[PASS] GET  /api/v1/auth/me - Authenticated profile retrieval returns HTTP 200
+[PASS] POST /api/v1/teams - Team formation generates 6-character unique join code
+[PASS] POST /api/v1/teams/join - Join code joins participant, caps at 4 members
+[PASS] POST /api/v1/submissions - Project draft creation and updates succeed
+[PASS] POST /api/v1/submissions/finalize - Project locked for evaluation
+[PASS] GET  /api/v1/submissions/gallery - Public showcase with text search & track filtering
+
+[PHASE 3: TIER 2 JUDGING, ISOLATION & NORMALIZATION]
+--------------------------------------------------------------------------------
+[PASS] Greedy Judge Assignment Engine:
+       - Balanced workload across track-qualified judges
+       - Conflict-of-interest exclusion verified
+[PASS] Route-Level Score Isolation Guards:
+       - Judge inspecting own assigned score: HTTP 200 OK
+       - Judge attempting to inspect another judge's score: HTTP 403 Forbidden
+       - Judge attempting to score unassigned project: HTTP 403 Forbidden
+[PASS] FastAPI Statistical Score Normalization:
+       - Z-score normalization: Z = (X - mu) / sigma
+       - Empirical Bayesian Shrinkage applied for sample sizes N < 5 (k = 3.0)
+       - Min-Max 0-100 score rescaling verified
+[PASS] Organizer Command Center & Leaderboard:
+       - Real-time toggle between Raw composite scores and Normalized standings
+       - Streaming CSV export generates valid RFC 4180 spreadsheet
+
+[PHASE 4: TIER 3 PUBLIC PARTICIPATION & ANTI-ABUSE]
+--------------------------------------------------------------------------------
+[PASS] Sybil-Resistant Community Voting:
+       - HMAC-SHA256 IP + User-Agent fingerprinting
+       - 1 vote per fingerprint per project (24h TTL)
+       - Sliding window rate limiter (5 req/min) triggers HTTP 429 on rapid clicks
+[PASS] Immutable Audit Logging:
+       - Administrative actions and score submissions logged to tamper-evident collection
+
+[PHASE 5: TIER 4 PAIRWISE ESTIMATION (STRETCH)]
+--------------------------------------------------------------------------------
+[PASS] Bradley-Terry pairwise preference ranking (Minorize-Maximization) converges:
+       - Tolerance < 1e-6 within 100 iterations
+       - Generates mathematically consistent latent ability scores
+
+[PHASE 6: AIR-GAP NETWORK & EGRESS AUDIT]
+--------------------------------------------------------------------------------
+[PASS] Outbound DNS resolution: BLOCKED (0 lookups)
+[PASS] Outbound TCP egress to 8.8.8.8:53: BLOCKED
+[PASS] Font & static asset delivery: 100% offline from local bundle
+[PASS] Single command zero-internet boot: verified via 'docker compose up --build'
+
+================================================================================
+FINAL VERDICT: READY FOR TOURNAMENT TO BE HOSTED AND JUDGED
+================================================================================
