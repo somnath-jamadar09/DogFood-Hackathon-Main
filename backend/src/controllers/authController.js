@@ -4,12 +4,13 @@ const { generateAccessToken, generateRefreshToken } = require('../config/jwt');
 
 exports.register = async (req, res, next) => {
   try {
-    const { email, password, fullName, role, judgeTracks } = req.body;
+    const { email, password, fullName, name, role, judgeTracks, trackPreferences, conflictsOfInterest } = req.body;
+    const resolvedName = name || fullName;
 
-    if (!email || !password || !fullName) {
+    if (!email || !password || !resolvedName) {
       return res.status(400).json({
         success: false,
-        error: 'Email, password, and full name are required.',
+        error: 'Email, password, and name are required.',
       });
     }
 
@@ -24,14 +25,17 @@ exports.register = async (req, res, next) => {
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
-    const assignedRole = ['judge', 'organizer'].includes(role) ? role : 'participant';
+    const validRoles = ['participant', 'judge', 'organizer', 'admin'];
+    const assignedRole = validRoles.includes(role) ? role : 'participant';
+    const tracks = trackPreferences || judgeTracks || [];
 
     const user = await User.create({
       email: email.toLowerCase().trim(),
       passwordHash,
-      fullName: fullName.trim(),
+      name: resolvedName.trim(),
       role: assignedRole,
-      judgeTracks: assignedRole === 'judge' ? judgeTracks || [] : [],
+      trackPreferences: assignedRole === 'judge' ? tracks : [],
+      conflictsOfInterest: conflictsOfInterest || [],
     });
 
     const token = generateAccessToken(user);
@@ -51,9 +55,12 @@ exports.register = async (req, res, next) => {
         user: {
           id: user._id,
           email: user.email,
-          fullName: user.fullName,
+          name: user.name,
+          fullName: user.name,
           role: user.role,
-          judgeTracks: user.judgeTracks,
+          trackPreferences: user.trackPreferences,
+          judgeTracks: user.trackPreferences,
+          conflictsOfInterest: user.conflictsOfInterest,
           teamId: user.teamId,
         },
       },
@@ -107,9 +114,12 @@ exports.login = async (req, res, next) => {
         user: {
           id: user._id,
           email: user.email,
-          fullName: user.fullName,
+          name: user.name,
+          fullName: user.name,
           role: user.role,
-          judgeTracks: user.judgeTracks,
+          trackPreferences: user.trackPreferences,
+          judgeTracks: user.trackPreferences,
+          conflictsOfInterest: user.conflictsOfInterest,
           teamId: user.teamId,
         },
       },
@@ -128,9 +138,12 @@ exports.getMe = async (req, res, next) => {
         user: {
           id: user._id,
           email: user.email,
-          fullName: user.fullName,
+          name: user.name,
+          fullName: user.name,
           role: user.role,
-          judgeTracks: user.judgeTracks,
+          trackPreferences: user.trackPreferences,
+          judgeTracks: user.trackPreferences,
+          conflictsOfInterest: user.conflictsOfInterest,
           team: user.teamId,
         },
       },

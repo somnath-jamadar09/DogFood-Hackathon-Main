@@ -15,7 +15,8 @@ function solveJudgeAssignments(submissions, judges, targetPerProject = 3) {
 
     for (const judge of judges) {
       // 1. Verify track match
-      const hasTrack = judge.judgeTracks && judge.judgeTracks.includes(submission.track);
+      const tracks = judge.trackPreferences || judge.judgeTracks || [];
+      const hasTrack = tracks.includes(submission.track);
       
       // 2. Verify conflict of interest (judge cannot score their own team or declared conflicts)
       const conflicts = (judge.conflictsOfInterest || []).map((id) => id.toString());
