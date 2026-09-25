@@ -1,0 +1,58 @@
+#!/usr/bin/env sh
+# Test commit message validator
+commit_msg_file="$1"
+
+if [ -z "$commit_msg_file" ] || [ ! -f "$commit_msg_file" ]; then
+    echo "Error: Commit message file not found."
+    exit 1
+fi
+
+# Extract first non-comment, non-empty line
+first_line=$(grep -v '^[[:space:]]*#' "$commit_msg_file" | grep -v '^[[:space:]]*$' | head -n 1)
+
+if [ -z "$first_line" ]; then
+    echo "Error: Commit message cannot be empty."
+    exit 1
+fi
+
+# Allow automated git commits
+if echo "$first_line" | grep -qE '^(Merge|Revert|fixup!|squash!|amend!)'; then
+    exit 0
+fi
+
+# Conventional Commits regex
+# Format: <type>(<optional scope>)<! (optional breaking)>: <description>
+pattern='^(feat|fix|docs|test|refactor|perf|chore)(\([a-zA-Z0-9_./-]+\))?!?: .+$'
+
+if echo "$first_line" | grep -qE "$pattern"; then
+    exit 0
+else
+    echo "================================================================================"
+    echo "❌ COMMIT REJECTED: Invalid commit message format!"
+    echo "--------------------------------------------------------------------------------"
+    echo "Your commit message:"
+    echo "  $first_line"
+    echo ""
+    echo "Commit messages must follow the Conventional Commits specification:"
+    echo "  <type>(<optional-scope>): <description>"
+    echo ""
+    echo "Allowed types:"
+    echo "  - feat      (a new feature)"
+    echo "  - fix       (a bug fix)"
+    echo "  - docs      (documentation changes)"
+    echo "  - test      (adding or correcting tests)"
+    echo "  - refactor  (code change that neither fixes a bug nor adds a feature)"
+    echo "  - perf      (a code change that improves performance)"
+    echo "  - chore     (changes to build process, tooling, dependencies, etc.)"
+    echo ""
+    echo "Examples of valid commit messages:"
+    echo "  feat: implement Bradley-Terry ranking algorithm"
+    echo "  fix(auth): prevent session timeout on token refresh"
+    echo "  docs(readme): add docker compose instructions"
+    echo "  test(api): add tests for score normalization endpoint"
+    echo "  refactor(middleware): optimize role guard verification"
+    echo "  perf(db): add index for submission team lookup"
+    echo "  chore(git): configure conventional commit hooks and gitignore"
+    echo "================================================================================"
+    exit 1
+fi

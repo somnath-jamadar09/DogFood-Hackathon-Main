@@ -14,11 +14,23 @@ judging-service/*/*/__pycache__/
 .venv/
 env/
 venv/
+.coverage
+htmlcov/
+.hypothesis/
+.tox/
 
-# Build artifacts
+# Build artifacts & caches
 dist/
 frontend/dist/
 build/
+.vite/
+frontend/.vite/
+.eslintcache
+
+# Coverage & test output
+coverage/
+.nyc_output/
+*.lcov
 
 # Logs & Database data
 *.log
@@ -38,8 +50,16 @@ mongo_data/
 backend/uploads/*
 !backend/uploads/.gitkeep
 
+# Docker overrides
+docker-compose.override.yml
+
 # IDE & OS files
 .DS_Store
 Thumbs.db
+[Dd]esktop.ini
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+*.tmp
