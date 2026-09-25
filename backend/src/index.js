@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 const morgan = require('morgan');
 const path = require('path');
@@ -24,6 +25,11 @@ const PORT = process.env.PORT || 5000;
 
 // Security & Parsing Middleware
 app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  })
+);
+app.use(
   cors({
     origin: process.env.CLIENT_URL || 'http://localhost:3000',
     credentials: true,
@@ -47,7 +53,7 @@ app.use('/api/', apiRateLimiter);
 app.get('/api/v1/health', (req, res) => {
   res.status(200).json({
     status: 'healthy',
-    service: 'dogfood-backend-api',
+    service: 'api',
     timestamp: new Date().toISOString(),
     uptimeSeconds: Math.floor(process.uptime()),
     version: '1.0.0',
