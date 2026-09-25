@@ -12,32 +12,49 @@ const RubricCriterionSchema = new mongoose.Schema(
 
 const EventSchema = new mongoose.Schema(
   {
-    name: {
+    title: {
       type: String,
-      required: true,
-      default: 'Hackathon Raptors 2026',
+      required: [true, 'Event title is required'],
+      trim: true,
+      alias: 'name',
+    },
+    description: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    tracks: {
+      type: [String],
+      default: [],
     },
     status: {
       type: String,
-      enum: ['upcoming', 'active', 'judging', 'closed'],
+      enum: {
+        values: ['upcoming', 'active', 'judging', 'closed'],
+        message: '{VALUE} is not a valid event status',
+      },
       default: 'active',
       index: true,
     },
     submissionDeadline: {
       type: Date,
-      required: true,
+      required: [true, 'Submission deadline is required'],
     },
-    tracks: [
-      {
-        type: String,
-        required: true,
-      },
-    ],
-    rubric: [RubricCriterionSchema],
+    rubricLocked: {
+      type: Boolean,
+      default: false,
+    },
+    rubric: {
+      type: [RubricCriterionSchema],
+      default: [],
+    },
   },
   {
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   }
 );
 
 module.exports = mongoose.model('Event', EventSchema);
+
