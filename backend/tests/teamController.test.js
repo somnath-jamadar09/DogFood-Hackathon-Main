@@ -2,8 +2,9 @@ const mongoose = require('mongoose');
 const teamController = require('../src/controllers/teamController');
 const Team = require('../src/models/Team');
 const User = require('../src/models/User');
+const Submission = require('../src/models/Submission');
 
-describe('Team Controller - POST /api/v1/teams Unit Tests', () => {
+describe('Team Controller Unit Tests', () => {
   let req, res, next;
 
   beforeEach(() => {
@@ -204,6 +205,404 @@ describe('Team Controller - POST /api/v1/teams Unit Tests', () => {
         expect.objectContaining({
           success: false,
           error: expect.stringMatching(/team with this name already exists/i),
+        })
+      );
+    });
+  });
+
+  describe('joinTeam', () => {
+    it('should reject request when joinCode is missing or whitespace', async () => {
+      req.body = { joinCode: '   ' };
+      await teamController.joinTeam(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          error: expect.stringMatching(/join code is required/i),
+        })
+      );
+    });
+
+    it('should reject request when joinCode is not 6 alphanumeric characters', async () => {
+      req.body = { joinCode: 'TOOLONG123' };
+      await teamController.joinTeam(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          error: expect.stringMatching(/6 alphanumeric/i),
+        })
+      );
+    });
+
+    it('should reject request when user is already in a team', async () => {
+      req.body = { joinCode: 'RAPTOR' };
+      req.user.teamId = new mongoose.Types.ObjectId();
+      jest.spyOn(Team, 'findById').mockResolvedValue({ _id: req.user.teamId });
+
+      await teamController.joinTeam(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          error: expect.stringMatching(/already in a team/i),
+        })
+      );
+    });
+
+    it('should return 404 when team is not found with provided join code', async () => {
+      req.body = { joinCode: 'NOTFND' };
+      jest.spyOn(Team, 'findOne').mockResolvedValue(null);
+
+      await teamController.joinTeam(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          error: expect.stringMatching(/not found/i),
+        })
+      );
+    });
+
+    it('should reject when team capacity has reached 4 members', async () => {
+      req.body = { joinCode: 'RAPTOR' };
+      const fullTeam = {
+        _id: new mongoose.Types.ObjectId(),
+        name: 'Full Team',
+        members: [
+          new mongoose.Types.ObjectId(),
+          new mongoose.Types.ObjectId(),
+          new mongoose.Types.ObjectId(),
+          new mongoose.Types.ObjectId(),
+        ],
+      };
+      jest.spyOn(Team, 'findOne').mockImplementation((query) => {
+        if (query.members) return Promise.resolve(null);
+        if (query.joinCode) return Promise.resolve(fullTeam);
+        return Promise.resolve(null);
+      });
+
+      await teamController.joinTeam(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          error: expect.stringMatching(/maximum limit of 4 members/i),
+        })
+      );
+    });
+
+    it('should reject when user is already a member of this team', async () => {
+      req.body = { joinCode: 'RAPTOR' };
+      const team = {
+        _id: new mongoose.Types.ObjectId(),
+        name: 'My Team',
+        members: [req.user._id],
+      };
+      jest.spyOn(Team, 'findOne').mockImplementation((query) => {
+        if (query.members) return Promise.resolve(null);
+        if (query.joinCode) return Promise.resolve(team);
+        return Promise.resolve(null);
+      });
+
+      await teamController.joinTeam(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          error: expect.stringMatching(/already a member/i),
+        })
+      );
+    });
+
+    it('should successfully add user to members when capacity < 4 and update user teamId', async () => {
+      req.body = { joinCode: 'RAPTOR' };
+      const captainId = new mongoose.Types.ObjectId();
+      const team = {
+        _id: new mongoose.Types.ObjectId(),
+        name: 'Raptor Squad',
+        captain: captainId,
+        members: [captainId],
+        save: jest.fn().mockResolvedValue(true),
+        populate: jest.fn().mockResolvedValue(true),
+      };
+      jest.spyOn(Team, 'findOne').mockImplementation((query) => {
+        if (query.members) return Promise.resolve(null);
+        if (query.joinCode) return Promise.resolve(team);
+        return Promise.resolve(null);
+      });
+      jest.spyOn(User, 'findByIdAndUpdate').mockResolvedValue(req.user);
+
+      await teamController.joinTeam(req, res, next);
+
+      expect(team.members).toContain(req.user._id);
+      expect(team.save).toHaveBeenCalled();
+      expect(req.user.save).toHaveBeenCalled();
+      expect(User.findByIdAndUpdate).toHaveBeenCalledWith(req.user._id.toString(), { teamId: team._id });
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          message: expect.stringMatching(/successfully joined Raptor Squad/i),
+        })
+      );
+    });
+  });
+
+  describe('getMyTeam', () => {
+    it('should return null team and submission when user has no team', async () => {
+      req.user.teamId = null;
+      jest.spyOn(Team, 'findOne').mockResolvedValue(null);
+
+      await teamController.getMyTeam(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        data: { team: null, submission: null, submissionStatus: null },
+      });
+    });
+
+    it('should populate team members, captain details, and active submission status', async () => {
+      const captainObj = {
+        _id: new mongoose.Types.ObjectId(),
+        name: 'Captain Jack',
+        fullName: 'Captain Jack',
+        email: 'jack@test.com',
+        role: 'participant',
+      };
+      const memberObj = {
+        _id: req.user._id,
+        name: 'Teammate Jill',
+        fullName: 'Teammate Jill',
+        email: 'jill@test.com',
+        role: 'participant',
+      };
+
+      const team = {
+        _id: new mongoose.Types.ObjectId(),
+        name: 'Alpha Team',
+        captain: captainObj,
+        members: [captainObj, memberObj],
+        populate: jest.fn().mockResolvedValue(true),
+        toObject: jest.fn().mockReturnValue({
+          _id: new mongoose.Types.ObjectId(),
+          name: 'Alpha Team',
+          captain: captainObj,
+          members: [captainObj, memberObj],
+        }),
+      };
+
+      const mockSubmission = {
+        _id: new mongoose.Types.ObjectId(),
+        teamId: team._id,
+        title: 'Project Titan',
+        status: 'submitted',
+      };
+
+      req.user.teamId = team._id;
+      jest.spyOn(Team, 'findById').mockResolvedValue(team);
+      jest.spyOn(Submission, 'findOne').mockResolvedValue(mockSubmission);
+
+      await teamController.getMyTeam(req, res, next);
+
+      expect(team.populate).toHaveBeenCalledWith('members', 'name fullName email role');
+      expect(team.populate).toHaveBeenCalledWith('captain', 'name fullName email role');
+      expect(Submission.findOne).toHaveBeenCalledWith({ teamId: team._id });
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          data: expect.objectContaining({
+            team: expect.objectContaining({
+              name: 'Alpha Team',
+              captainId: captainObj._id.toString(),
+            }),
+            submission: mockSubmission,
+            submissionStatus: 'submitted',
+          }),
+        })
+      );
+    });
+  });
+
+  describe('removeMember', () => {
+    it('should return 400 when target userId is invalid', async () => {
+      req.params = { userId: 'not-a-valid-id' };
+      await teamController.removeMember(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          error: expect.stringMatching(/valid user id/i),
+        })
+      );
+    });
+
+    it('should return 404 when target member is not in any team', async () => {
+      const targetUserId = new mongoose.Types.ObjectId();
+      req.params = { userId: targetUserId.toString() };
+      jest.spyOn(Team, 'findOne').mockResolvedValue(null);
+
+      await teamController.removeMember(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          error: expect.stringMatching(/not part of any team/i),
+        })
+      );
+    });
+
+    it('should return 403 when an unauthorized member tries to remove another member', async () => {
+      const targetUserId = new mongoose.Types.ObjectId();
+      const captainId = new mongoose.Types.ObjectId();
+      req.params = { userId: targetUserId.toString() };
+      req.user._id = new mongoose.Types.ObjectId(); // Random teammate, not captain, not target
+      req.user.role = 'participant';
+
+      const team = {
+        _id: new mongoose.Types.ObjectId(),
+        captain: captainId,
+        members: [captainId, req.user._id, targetUserId],
+      };
+      jest.spyOn(Team, 'findOne').mockResolvedValue(team);
+
+      await teamController.removeMember(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          error: expect.stringMatching(/forbidden/i),
+        })
+      );
+    });
+
+    it('should allow captain to remove a member', async () => {
+      const targetUserId = new mongoose.Types.ObjectId();
+      req.params = { userId: targetUserId.toString() };
+      // req.user is the captain
+      const team = {
+        _id: new mongoose.Types.ObjectId(),
+        captain: req.user._id,
+        members: [req.user._id, targetUserId],
+        save: jest.fn().mockResolvedValue(true),
+        populate: jest.fn().mockResolvedValue(true),
+        toObject: jest.fn().mockReturnValue({
+          _id: new mongoose.Types.ObjectId(),
+          captain: req.user._id,
+          members: [req.user._id],
+        }),
+      };
+      jest.spyOn(Team, 'findOne').mockResolvedValue(team);
+      jest.spyOn(User, 'findByIdAndUpdate').mockResolvedValue({});
+
+      await teamController.removeMember(req, res, next);
+
+      expect(team.members).not.toContain(targetUserId);
+      expect(User.findByIdAndUpdate).toHaveBeenCalledWith(targetUserId.toString(), { teamId: null });
+      expect(team.save).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          message: expect.stringMatching(/member successfully removed/i),
+        })
+      );
+    });
+
+    it('should allow a member to voluntarily depart', async () => {
+      const captainId = new mongoose.Types.ObjectId();
+      req.params = { userId: req.user._id.toString() }; // User removes self
+      req.user.teamId = new mongoose.Types.ObjectId();
+
+      const team = {
+        _id: req.user.teamId,
+        captain: captainId,
+        members: [captainId, req.user._id],
+        save: jest.fn().mockResolvedValue(true),
+        populate: jest.fn().mockResolvedValue(true),
+        toObject: jest.fn().mockReturnValue({
+          _id: req.user.teamId,
+          captain: captainId,
+          members: [captainId],
+        }),
+      };
+      jest.spyOn(Team, 'findOne').mockResolvedValue(team);
+      jest.spyOn(User, 'findByIdAndUpdate').mockResolvedValue({});
+
+      await teamController.removeMember(req, res, next);
+
+      expect(team.members).not.toContain(req.user._id);
+      expect(req.user.save).toHaveBeenCalled();
+      expect(team.save).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          message: expect.stringMatching(/voluntarily left the team/i),
+        })
+      );
+    });
+
+    it('should transfer captaincy when captain departs and other members remain', async () => {
+      const remainingMemberId = new mongoose.Types.ObjectId();
+      req.params = { userId: req.user._id.toString() }; // Captain departs
+      req.user.teamId = new mongoose.Types.ObjectId();
+
+      const team = {
+        _id: req.user.teamId,
+        captain: req.user._id,
+        members: [req.user._id, remainingMemberId],
+        save: jest.fn().mockResolvedValue(true),
+        populate: jest.fn().mockResolvedValue(true),
+        toObject: jest.fn().mockReturnValue({
+          _id: req.user.teamId,
+          captain: remainingMemberId,
+          members: [remainingMemberId],
+        }),
+      };
+      jest.spyOn(Team, 'findOne').mockResolvedValue(team);
+      jest.spyOn(User, 'findByIdAndUpdate').mockResolvedValue({});
+
+      await teamController.removeMember(req, res, next);
+
+      expect(team.captain).toEqual(remainingMemberId);
+      expect(team.members).not.toContain(req.user._id);
+      expect(team.save).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          message: expect.stringMatching(/captaincy has been transferred/i),
+        })
+      );
+    });
+
+    it('should disband team when last member departs', async () => {
+      req.params = { userId: req.user._id.toString() };
+      req.user.teamId = new mongoose.Types.ObjectId();
+
+      const team = {
+        _id: req.user.teamId,
+        captain: req.user._id,
+        members: [req.user._id], // sole member
+      };
+      jest.spyOn(Team, 'findOne').mockResolvedValue(team);
+      jest.spyOn(Team, 'findByIdAndDelete').mockResolvedValue(team);
+      jest.spyOn(Submission, 'deleteMany').mockResolvedValue({});
+      jest.spyOn(User, 'findByIdAndUpdate').mockResolvedValue({});
+
+      await teamController.removeMember(req, res, next);
+
+      expect(Team.findByIdAndDelete).toHaveBeenCalledWith(team._id);
+      expect(Submission.deleteMany).toHaveBeenCalledWith({ teamId: team._id, status: 'draft' });
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          message: expect.stringMatching(/disbanded/i),
+          data: { team: null },
         })
       );
     });

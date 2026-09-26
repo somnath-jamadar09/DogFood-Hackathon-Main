@@ -9,5 +9,6 @@ router.use(authMiddleware);
 router.post('/', roleGuard('participant', 'organizer', 'admin'), teamController.createTeam);
 router.post('/join', roleGuard('participant', 'organizer', 'admin'), teamController.joinTeam);
 router.get('/my-team', teamController.getMyTeam);
+router.delete('/members/:userId', roleGuard('participant', 'organizer', 'admin'), teamController.removeMember);
 
 module.exports = router;

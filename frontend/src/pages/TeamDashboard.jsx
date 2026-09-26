@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useNotification } from '../context/NotificationContext';
 import api from '../services/api';
-import { Users, Copy, Check, UserPlus, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Users, Copy, Check, UserPlus, ArrowRight, ShieldCheck, UserMinus, LogOut } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const TRACKS = ['AI/ML', 'Web3 & Blockchain', 'FinTech', 'HealthTech'];
@@ -82,6 +82,36 @@ export const TeamDashboard = () => {
     }
   };
 
+  const handleRemoveMember = async (memberId, memberName) => {
+    if (!window.confirm(`Are you sure you want to remove ${memberName} from the team?`)) return;
+    try {
+      const res = await api.delete(`/teams/members/${memberId}`);
+      if (res.success) {
+        addNotification(`${memberName} removed from team.`, 'info');
+        fetchTeam();
+      }
+    } catch (err) {
+      addNotification(err.message, 'error');
+    }
+  };
+
+  const handleLeaveTeam = async () => {
+    if (!window.confirm('Are you sure you want to leave this team?')) return;
+    try {
+      const currentUserId = user?._id || user?.id;
+      const res = await api.delete(`/teams/members/${currentUserId}`);
+      if (res.success) {
+        addNotification('You have left the team.', 'info');
+        setUser((prev) => ({ ...prev, teamId: null }));
+        setTeamData(null);
+        setSubmissionData(null);
+        fetchTeam();
+      }
+    } catch (err) {
+      addNotification(err.message, 'error');
+    }
+  };
+
   const copyJoinCode = () => {
     if (teamData?.joinCode) {
       navigator.clipboard.writeText(teamData.joinCode);
@@ -99,13 +129,29 @@ export const TeamDashboard = () => {
     );
   }
 
+  const currentUserId = (user?._id || user?.id)?.toString();
+  const captainUserId = (teamData?.captainId || teamData?.captain?._id || teamData?.captain)?.toString();
+  const isCurrentUserCaptain = currentUserId && captainUserId && currentUserId === captainUserId;
+
   return (
     <div className="max-w-4xl mx-auto space-y-8 py-6">
-      <div>
-        <h1 className="text-3xl font-extrabold text-white">Team Management</h1>
-        <p className="text-sm text-gray-400 mt-1">
-          Form or join a team (max 4 members per team). Each team collaborates on one project.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-extrabold text-white">Team Management</h1>
+          <p className="text-sm text-gray-400 mt-1">
+            Form or join a team (max 4 members per team). Each team collaborates on one project.
+          </p>
+        </div>
+        {teamData && (
+          <button
+            onClick={handleLeaveTeam}
+            className="self-start sm:self-auto px-4 py-2 rounded-xl bg-red-950/40 hover:bg-red-900/60 border border-red-800/80 text-red-300 hover:text-red-200 text-xs font-semibold flex items-center space-x-2 transition-all"
+            title="Leave this team"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Leave Team</span>
+          </button>
+        )}
       </div>
 
       {teamData ? (
@@ -151,27 +197,43 @@ export const TeamDashboard = () => {
               Team Roster
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {teamData.members.map((member) => (
-                <div
-                  key={member._id}
-                  className="flex items-center justify-between p-3.5 rounded-xl bg-surface-raised border border-border-subtle"
-                >
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 rounded-full bg-blue-600/20 border border-blue-500/40 text-blue-300 font-bold text-xs flex items-center justify-center">
-                      {member.fullName.charAt(0)}
+              {teamData.members.map((member) => {
+                const memberIdStr = (member._id || member).toString();
+                const isMemberCaptain = memberIdStr === captainUserId;
+
+                return (
+                  <div
+                    key={memberIdStr}
+                    className="flex items-center justify-between p-3.5 rounded-xl bg-surface-raised border border-border-subtle"
+                  >
+                    <div className="flex items-center space-x-3">
+                      <div className="w-8 h-8 rounded-full bg-blue-600/20 border border-blue-500/40 text-blue-300 font-bold text-xs flex items-center justify-center">
+                        {(member.fullName || member.name || 'U').charAt(0)}
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-white">{member.fullName || member.name}</div>
+                        <div className="text-xs text-gray-400">{member.email}</div>
+                      </div>
                     </div>
-                    <div>
-                      <div className="text-sm font-semibold text-white">{member.fullName}</div>
-                      <div className="text-xs text-gray-400">{member.email}</div>
+                    <div className="flex items-center space-x-2">
+                      {isMemberCaptain && (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-950/60 text-amber-300 border border-amber-800">
+                          Captain
+                        </span>
+                      )}
+                      {isCurrentUserCaptain && !isMemberCaptain && (
+                        <button
+                          onClick={() => handleRemoveMember(memberIdStr, member.fullName || member.name)}
+                          className="p-1.5 rounded-lg hover:bg-red-950/50 text-red-400 hover:text-red-300 transition-colors"
+                          title="Remove member"
+                        >
+                          <UserMinus className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
-                  {member._id === teamData.captainId && (
-                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-950/60 text-amber-300 border border-amber-800">
-                      Captain
-                    </span>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 

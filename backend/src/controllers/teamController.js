@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const mongoose = require('mongoose');
 const Team = require('../models/Team');
 const User = require('../models/User');
 const Submission = require('../models/Submission');
@@ -157,6 +158,17 @@ exports.joinTeam = async (req, res, next) => {
       });
     }
 
+    const formattedCode = joinCode.trim().toUpperCase();
+    if (!/^[A-Z0-9]{6}$/.test(formattedCode)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Join code must be 6 alphanumeric characters.',
+      });
+    }
+
+    const userId = (req.user._id || req.user.id).toString();
+
+    // Verify user is not already in a team
     if (req.user.teamId) {
       const existingTeam = await Team.findById(req.user.teamId);
       if (existingTeam) {
@@ -166,11 +178,21 @@ exports.joinTeam = async (req, res, next) => {
         });
       } else {
         req.user.teamId = null;
-        await User.findByIdAndUpdate(req.user._id, { teamId: null });
+        await User.findByIdAndUpdate(userId, { teamId: null });
       }
     }
 
-    const team = await Team.findOne({ joinCode: joinCode.trim().toUpperCase() });
+    const existingMembership = await Team.findOne({ members: userId });
+    if (existingMembership) {
+      req.user.teamId = existingMembership._id;
+      if (typeof req.user.save === 'function') await req.user.save();
+      return res.status(400).json({
+        success: false,
+        error: 'You are already in a team. You cannot join another.',
+      });
+    }
+
+    const team = await Team.findOne({ joinCode: formattedCode });
     if (!team) {
       return res.status(404).json({
         success: false,
@@ -178,31 +200,43 @@ exports.joinTeam = async (req, res, next) => {
       });
     }
 
-    if (team.members.length >= 4) {
+    if (team.members && team.members.length >= 4) {
       return res.status(400).json({
         success: false,
         error: 'This team has already reached the maximum limit of 4 members.',
       });
     }
 
-    if (team.members.some((m) => m.toString() === req.user._id.toString())) {
+    if (team.members && team.members.some((m) => (m._id || m).toString() === userId)) {
       return res.status(400).json({
         success: false,
         error: 'You are already a member of this team.',
       });
     }
 
-    team.members.push(req.user._id);
+    team.members.push(req.user._id || req.user.id);
     await team.save();
 
     req.user.teamId = team._id;
-    await req.user.save();
-    await User.findByIdAndUpdate(req.user._id, { teamId: team._id });
+    if (typeof req.user.save === 'function') {
+      await req.user.save();
+    }
+    await User.findByIdAndUpdate(userId, { teamId: team._id });
+
+    if (typeof team.populate === 'function') {
+      await team.populate('members', 'name fullName email role');
+      await team.populate('captain', 'name fullName email role');
+    }
+
+    const teamObj = typeof team.toObject === 'function' ? team.toObject({ virtuals: true }) : { ...team };
+    if (team.captain) {
+      teamObj.captainId = (team.captain._id || team.captain).toString();
+    }
 
     return res.status(200).json({
       success: true,
       message: `Successfully joined ${team.name}.`,
-      data: { team },
+      data: { team: teamObj },
     });
   } catch (error) {
     if (error.name === 'ValidationError') {
@@ -217,29 +251,140 @@ exports.joinTeam = async (req, res, next) => {
 
 exports.getMyTeam = async (req, res, next) => {
   try {
-    if (!req.user.teamId) {
+    const userId = (req.user._id || req.user.id).toString();
+    let team = null;
+
+    if (req.user.teamId) {
+      team = await Team.findById(req.user.teamId);
+    }
+
+    // Fallback: check if user is a member of any team
+    if (!team) {
+      team = await Team.findOne({ members: userId });
+      if (team) {
+        req.user.teamId = team._id;
+        if (typeof req.user.save === 'function') await req.user.save();
+        await User.findByIdAndUpdate(userId, { teamId: team._id });
+      }
+    }
+
+    if (!team) {
       return res.status(200).json({
         success: true,
-        data: { team: null, submission: null },
+        data: { team: null, submission: null, submissionStatus: null },
       });
     }
 
-    const team = await Team.findById(req.user.teamId).populate('members', 'name fullName email role');
-    if (!team) {
-      return res.status(404).json({
-        success: false,
-        error: 'Team not found.',
-      });
+    if (typeof team.populate === 'function') {
+      await team.populate('members', 'name fullName email role');
+      await team.populate('captain', 'name fullName email role');
+    }
+
+    const teamObj = typeof team.toObject === 'function' ? team.toObject({ virtuals: true }) : { ...team };
+    if (team.captain) {
+      teamObj.captainId = (team.captain._id || team.captain).toString();
     }
 
     const submission = await Submission.findOne({ teamId: team._id });
+    const submissionStatus = submission ? submission.status : null;
 
     return res.status(200).json({
       success: true,
       data: {
-        team,
+        team: teamObj,
         submission,
+        submissionStatus,
       },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.removeMember = async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+    const currentUserId = (req.user._id || req.user.id).toString();
+
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'A valid user ID is required.',
+      });
+    }
+
+    // Find the team containing the target member
+    const team = await Team.findOne({ members: userId });
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        error: 'Target member is not part of any team.',
+      });
+    }
+
+    const captainId = (team.captain._id || team.captain).toString();
+    const isCaptain = captainId === currentUserId;
+    const isSelf = currentUserId === userId.toString();
+    const isAdminOrOrganizer = ['admin', 'organizer'].includes(req.user.role);
+
+    if (!isCaptain && !isSelf && !isAdminOrOrganizer) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden: Only the team captain can remove members, or a member can leave voluntarily.',
+      });
+    }
+
+    // Remove user from team members
+    team.members = team.members.filter((m) => (m._id || m).toString() !== userId.toString());
+
+    // Update target user's teamId
+    await User.findByIdAndUpdate(userId, { teamId: null });
+    if (isSelf) {
+      req.user.teamId = null;
+      if (typeof req.user.save === 'function') {
+        await req.user.save();
+      }
+    }
+
+    // Check if team is now empty
+    if (team.members.length === 0) {
+      await Team.findByIdAndDelete(team._id);
+      await Submission.deleteMany({ teamId: team._id, status: 'draft' });
+
+      return res.status(200).json({
+        success: true,
+        message: isSelf
+          ? 'You have left the team. The team has been disbanded as no members remain.'
+          : 'Member removed and team disbanded as no members remain.',
+        data: { team: null },
+      });
+    }
+
+    // If captain left, transfer captaincy to first remaining member
+    if (captainId === userId.toString()) {
+      team.captain = team.members[0];
+    }
+
+    await team.save();
+
+    if (typeof team.populate === 'function') {
+      await team.populate('members', 'name fullName email role');
+      await team.populate('captain', 'name fullName email role');
+    }
+
+    const teamObj = typeof team.toObject === 'function' ? team.toObject({ virtuals: true }) : { ...team };
+    if (team.captain) {
+      teamObj.captainId = (team.captain._id || team.captain).toString();
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: isSelf
+        ? (captainId === userId.toString()
+            ? 'You have left the team. Captaincy has been transferred.'
+            : 'You have voluntarily left the team.')
+        : 'Member successfully removed from the team.',
+      data: { team: teamObj },
     });
   } catch (error) {
     next(error);
