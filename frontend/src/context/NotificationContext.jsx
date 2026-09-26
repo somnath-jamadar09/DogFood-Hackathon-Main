@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useCallback } from 'react';
-import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
+import { CheckCircle2, AlertCircle, AlertTriangle, Info, X } from 'lucide-react';
 
 const NotificationContext = createContext(null);
 
@@ -34,12 +34,15 @@ export const NotificationProvider = ({ children }) => {
                 ? 'bg-emerald-950/90 border-emerald-700/60 text-emerald-200'
                 : n.type === 'error'
                 ? 'bg-rose-950/90 border-rose-700/60 text-rose-200'
+                : n.type === 'warning'
+                ? 'bg-amber-950/90 border-amber-700/60 text-amber-200'
                 : 'bg-gray-900/90 border-gray-700 text-gray-200'
             }`}
           >
             <div className="flex items-center space-x-3">
               {n.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />}
               {n.type === 'error' && <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />}
+              {n.type === 'warning' && <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />}
               {n.type === 'info' && <Info className="w-5 h-5 text-blue-400 shrink-0" />}
               <span className="text-sm font-medium">{n.message}</span>
             </div>
