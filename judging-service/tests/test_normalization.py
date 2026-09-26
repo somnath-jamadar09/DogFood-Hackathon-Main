@@ -352,3 +352,156 @@ def test_parse_score_matrix_rejects_unknown_criterion():
 
     with pytest.raises(ValueError, match="Unknown criterion"):
         normalization.parse_score_matrix(records, criterion_keys=["impact"])
+
+
+def test_empirical_bayesian_engine_reuses_shrunk_mean_and_calibrates_scores():
+    values = np.array([[2.0, 6.0], [8.5, 8.5]])
+    mask = np.ones(values.shape, dtype=bool)
+
+    result = normalization.calculate_empirical_bayesian_shrinkage(values, mask)
+
+    assert result.global_mean == pytest.approx(6.25)
+    assert result.judge_results[0].shrunk_mean == pytest.approx(5.35)
+    assert result.judge_results[0].shrunk_std == pytest.approx(
+        np.sqrt((2 / 5) * 8.0 + (3 / 5) * (28.25 / 3))
+    )
+    expected_z = (2.0 - 5.35) / (result.judge_results[0].shrunk_std + 1e-6)
+    assert result.calibrated_z_scores[0, 0] == pytest.approx(expected_z)
+
+
+def test_empirical_bayesian_engine_zero_variance_judge_uses_global_variance():
+    values = np.array([[5.0, 5.0, 5.0, 5.0], [7.0, 7.0, 7.0, 7.0]])
+    result = normalization.calculate_empirical_bayesian_shrinkage(values)
+    judge = result.judge_results[0]
+
+    assert judge.raw_std == pytest.approx(0.0)
+    assert judge.shrunk_std > 0.0
+    expected = (5.0 - judge.shrunk_mean) / (judge.shrunk_std + 1e-6)
+    assert result.calibrated_z_scores[0, 0] == pytest.approx(expected)
+    assert result.calibrated_z_scores[0, 0] != pytest.approx(0.0)
+
+
+def test_empirical_bayesian_engine_singleton_preserves_nan_raw_std_without_fake_score():
+    values = np.array([[4.0, np.nan, np.nan, np.nan], [5.0, 7.0, 9.0, 11.0]])
+    result = normalization.calculate_empirical_bayesian_shrinkage(values)
+    judge = result.judge_results[0]
+
+    assert judge.sample_size == 1
+    assert np.isnan(judge.raw_std)
+    assert np.isfinite(judge.shrunk_std)
+    assert np.isfinite(result.calibrated_z_scores[0, 0])
+    assert result.calibrated_z_scores[0, 0] != 0.0
+
+
+@pytest.mark.parametrize("sample_size", [2, 3, 4])
+def test_empirical_bayesian_engine_small_samples_shrink_toward_global_mean(sample_size):
+    values = np.full((2, 4), np.nan)
+    values[0, :sample_size] = np.arange(1.0, sample_size + 1.0)
+    values[1] = 9.0
+
+    result = normalization.calculate_empirical_bayesian_shrinkage(values)
+    judge = result.judge_results[0]
+
+    assert min(judge.raw_mean, result.global_mean) <= judge.shrunk_mean <= max(
+        judge.raw_mean, result.global_mean
+    )
+    assert abs(judge.shrunk_mean - result.global_mean) < abs(
+        judge.raw_mean - result.global_mean
+    )
+
+
+def test_empirical_bayesian_engine_rejects_empty_judge():
+    values = np.array([[np.nan, np.nan], [2.0, 4.0]])
+    mask = np.array([[False, False], [True, True]])
+
+    with pytest.raises(ValueError, match="at least one observed score"):
+        normalization.calculate_empirical_bayesian_shrinkage(values, mask)
+
+
+def test_empirical_bayesian_engine_large_sample_approaches_raw_statistics():
+    values = np.vstack((np.arange(1.0, 101.0), np.full(100, 50.5)))
+    result = normalization.calculate_empirical_bayesian_shrinkage(values)
+    judge = result.judge_results[0]
+
+    assert judge.shrunk_mean == pytest.approx(judge.raw_mean)
+    assert judge.shrunk_std == pytest.approx(judge.raw_std, rel=0.01)
+
+
+def test_empirical_bayesian_engine_is_neutral_when_global_statistics_match():
+    result = normalization.calculate_empirical_bayesian_shrinkage(
+        np.array([[1.0, 2.0, 3.0, 4.0]])
+    )
+    judge = result.judge_results[0]
+
+    assert judge.shrunk_mean == pytest.approx(judge.raw_mean)
+    assert judge.shrunk_std == pytest.approx(judge.raw_std)
+
+
+def test_empirical_bayesian_engine_preserves_masked_nan_and_ignores_placeholders():
+    values = np.array([[1.0, np.nan, 3.0, 5.0], [2.0, 4.0, np.nan, np.nan]])
+    mask = np.isfinite(values)
+    altered = values.copy()
+    altered[~mask] = 999.0
+
+    result = normalization.calculate_empirical_bayesian_shrinkage(values, mask)
+    altered_result = normalization.calculate_empirical_bayesian_shrinkage(altered, mask)
+
+    assert np.isnan(result.calibrated_z_scores[~mask]).all()
+    assert np.isfinite(result.calibrated_z_scores[mask]).all()
+    assert result.global_mean == pytest.approx(altered_result.global_mean)
+    assert result.global_std == pytest.approx(altered_result.global_std)
+    for first, second in zip(result.judge_results, altered_result.judge_results):
+        assert first.raw_mean == pytest.approx(second.raw_mean)
+        assert first.raw_std == pytest.approx(second.raw_std)
+        assert first.shrunk_mean == pytest.approx(second.shrunk_mean)
+        assert first.shrunk_std == pytest.approx(second.shrunk_std)
+
+
+def test_empirical_bayesian_engine_is_deterministic():
+    values = np.array([[2.0, np.nan, 4.0], [8.0, 10.0, np.nan]])
+    mask = np.isfinite(values)
+
+    first = normalization.calculate_empirical_bayesian_shrinkage(values, mask)
+    second = normalization.calculate_empirical_bayesian_shrinkage(values, mask)
+
+    np.testing.assert_allclose(
+        first.calibrated_z_scores, second.calibrated_z_scores, equal_nan=True
+    )
+    for first_judge, second_judge in zip(first.judge_results, second.judge_results):
+        assert first_judge.judge_id == second_judge.judge_id
+        assert first_judge.sample_size == second_judge.sample_size
+        assert first_judge.raw_mean == second_judge.raw_mean
+        assert first_judge.raw_std == second_judge.raw_std
+        assert first_judge.shrunk_mean == second_judge.shrunk_mean
+        assert first_judge.shrunk_std == second_judge.shrunk_std
+
+
+def test_empirical_bayesian_engine_supports_synthetic_tournament_shape_and_mask():
+    tournament = generate_synthetic_tournament()
+    submissions = tuple(submission.submission_id for submission in tournament.submissions)
+    judges = tuple(judge.judge_id for judge in tournament.judges)
+    scores = {
+        (score.judge_id, score.submission_id): float(score.raw_composite_score)
+        for score in tournament.scores
+    }
+    values = np.full((len(judges), len(submissions), 1), np.nan)
+    mask = np.zeros(values.shape, dtype=bool)
+    for judge_index, judge_id in enumerate(judges):
+        for submission_index, submission_id in enumerate(submissions):
+            if (judge_id, submission_id) in scores:
+                values[judge_index, submission_index, 0] = scores[(judge_id, submission_id)]
+                mask[judge_index, submission_index, 0] = True
+
+    result = normalization.calculate_empirical_bayesian_shrinkage(
+        values, mask, judge_ids=judges
+    )
+    repeated = normalization.calculate_empirical_bayesian_shrinkage(
+        values, mask, judge_ids=judges
+    )
+
+    assert result.calibrated_z_scores.shape == values.shape
+    assert np.isfinite(result.calibrated_z_scores[mask]).all()
+    assert np.isnan(result.calibrated_z_scores[~mask]).all()
+    np.testing.assert_allclose(
+        result.calibrated_z_scores, repeated.calibrated_z_scores, equal_nan=True
+    )

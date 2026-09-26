@@ -16,6 +16,33 @@ class ScoreMatrix:
     criterion_keys: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class JudgeShrinkageResult:
+    """Raw and empirically shrunk statistics for one judge."""
+
+    judge_id: str
+    sample_size: int
+    raw_mean: float
+    raw_std: float
+    shrunk_mean: float
+    shrunk_std: float
+    z_scores: np.ndarray
+
+
+@dataclass(frozen=True)
+class EmpiricalBayesianShrinkageResult:
+    """Judge-level shrinkage output for the supplied score matrix."""
+
+    judge_results: tuple[JudgeShrinkageResult, ...]
+    global_mean: float
+    global_std: float
+    calibrated_z_scores: np.ndarray
+
+    @property
+    def z_scores(self) -> np.ndarray:
+        return self.calibrated_z_scores
+
+
 def parse_score_matrix(
     records: Sequence[Mapping[str, Any]],
     criterion_keys: Sequence[str],
@@ -154,6 +181,109 @@ def calculate_sample_std(scores: Sequence[float]) -> float:
 
 
 Z_SCORE_EPSILON = 1e-6
+SHRINKAGE_PRIOR_K = 3.0
+
+
+def calculate_empirical_bayesian_shrinkage(
+    scores: np.ndarray | ScoreMatrix,
+    mask: np.ndarray | None = None,
+    judge_ids: Sequence[str] | None = None,
+    prior_k: float = SHRINKAGE_PRIOR_K,
+) -> EmpiricalBayesianShrinkageResult:
+    """Shrink each judge's mean and variance, then return calibrated Z-scores."""
+    if isinstance(scores, ScoreMatrix):
+        values = np.asarray(scores.matrix, dtype=float)
+        if mask is None:
+            mask = scores.mask
+        if judge_ids is None:
+            judge_ids = scores.judge_ids
+    else:
+        values = np.asarray(scores, dtype=float)
+
+    if values.ndim not in (1, 2, 3):
+        raise ValueError("scores must be one-, two-, or three-dimensional")
+
+    try:
+        prior_k = float(prior_k)
+    except (TypeError, ValueError) as error:
+        raise ValueError("prior_k must be numeric") from error
+    if not np.isfinite(prior_k) or prior_k < 0:
+        raise ValueError("prior_k must be finite and non-negative")
+
+    observed = np.isfinite(values) if mask is None else np.asarray(mask, dtype=bool)
+    if observed.shape != values.shape:
+        raise ValueError("mask must have the same shape as scores")
+    valid = observed & np.isfinite(values)
+
+    judge_count = 1 if values.ndim == 1 else values.shape[0]
+    if judge_ids is None:
+        ordered_judge_ids = tuple(f"judge-{index}" for index in range(judge_count))
+    else:
+        ordered_judge_ids = tuple(str(judge_id) for judge_id in judge_ids)
+        if len(ordered_judge_ids) != judge_count:
+            raise ValueError("judge_ids must match the number of judges")
+
+    judge_views = (
+        ((values, valid),)
+        if values.ndim == 1
+        else tuple((values[index], valid[index]) for index in range(judge_count))
+    )
+    observed_by_judge = []
+    for judge_values, judge_mask in judge_views:
+        observed_scores = judge_values[judge_mask]
+        if observed_scores.size == 0:
+            raise ValueError("each judge must have at least one observed score")
+        observed_by_judge.append(observed_scores)
+
+    all_observed = np.concatenate(observed_by_judge)
+    if all_observed.size < 2:
+        raise ValueError("at least two observed scores are required for global statistics")
+    global_mean = calculate_mean(all_observed)
+    global_std = calculate_sample_std(all_observed)
+    calibrated_z_scores = np.full(values.shape, np.nan, dtype=float)
+    judge_results = []
+
+    for index, (judge_values, judge_mask) in enumerate(judge_views):
+        observed_scores = observed_by_judge[index]
+        sample_size = int(observed_scores.size)
+        raw_mean = calculate_mean(observed_scores)
+        raw_std = (
+            float("nan")
+            if sample_size < 2
+            else calculate_sample_std(observed_scores)
+        )
+        shrunk_mean = calculate_shrunk_mean(
+            raw_mean, sample_size, global_mean, prior_k=prior_k
+        )
+        raw_variance = 0.0 if np.isnan(raw_std) else raw_std**2
+        weight = sample_size / (sample_size + prior_k)
+        prior_weight = prior_k / (sample_size + prior_k)
+        shrunk_variance = max(
+            0.0, weight * raw_variance + prior_weight * global_std**2
+        )
+        shrunk_std = float(np.sqrt(shrunk_variance))
+        judge_result = calibrated_z_scores[index] if values.ndim > 1 else calibrated_z_scores
+        judge_result[judge_mask] = (
+            judge_values[judge_mask] - shrunk_mean
+        ) / (shrunk_std + Z_SCORE_EPSILON)
+        judge_results.append(
+            JudgeShrinkageResult(
+                judge_id=ordered_judge_ids[index],
+                sample_size=sample_size,
+                raw_mean=raw_mean,
+                raw_std=raw_std,
+                shrunk_mean=shrunk_mean,
+                shrunk_std=shrunk_std,
+                z_scores=judge_result.copy(),
+            )
+        )
+
+    return EmpiricalBayesianShrinkageResult(
+        judge_results=tuple(judge_results),
+        global_mean=global_mean,
+        global_std=global_std,
+        calibrated_z_scores=calibrated_z_scores,
+    )
 
 
 def calculate_z_scores(
