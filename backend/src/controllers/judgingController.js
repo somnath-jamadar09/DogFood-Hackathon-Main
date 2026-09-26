@@ -2,6 +2,7 @@ const Score = require('../models/Score');
 const JudgeAssignment = require('../models/JudgeAssignment');
 const Submission = require('../models/Submission');
 const Event = require('../models/Event');
+const Rubric = require('../models/Rubric');
 const AuditLog = require('../models/AuditLog');
 const crypto = require('crypto');
 
@@ -143,10 +144,25 @@ exports.getEventRubric = async (req, res, next) => {
       { name: 'Polish & Presentation', weight: 0.2, scaleMin: 1, scaleMax: 10 },
     ];
 
+    let rubric = event?.rubric?.length ? event.rubric : defaultRubric;
+
+    if (event) {
+      const rubricDoc = await Rubric.findOne({ eventId: event._id });
+      if (rubricDoc && rubricDoc.criteria && rubricDoc.criteria.length > 0) {
+        rubric = rubricDoc.criteria.map((c) => ({
+          name: c.label || c.key,
+          key: c.key,
+          weight: c.weight,
+          scaleMin: c.minScore !== undefined ? c.minScore : 1,
+          scaleMax: c.maxScore !== undefined ? c.maxScore : 10,
+        }));
+      }
+    }
+
     return res.status(200).json({
       success: true,
       data: {
-        rubric: event?.rubric?.length ? event.rubric : defaultRubric,
+        rubric,
         tracks: event?.tracks || ['AI/ML', 'Web3 & Blockchain', 'FinTech', 'HealthTech'],
       },
     });
