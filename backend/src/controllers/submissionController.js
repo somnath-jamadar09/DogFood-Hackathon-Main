@@ -86,7 +86,7 @@ exports.uploadThumbnail = async (req, res, next) => {
       });
     }
 
-    const filePath = `/uploads/${req.file.filename}`;
+    const filePath = `/uploads/thumbnails/${req.file.filename}`;
     return res.status(200).json({
       success: true,
       message: 'Thumbnail uploaded successfully.',
