@@ -3,7 +3,11 @@ import warnings
 import numpy as np
 import pytest
 from app.algorithms import normalization
-from app.algorithms.normalization import calculate_z_scores, run_normalization
+from app.algorithms.normalization import (
+    calculate_shrunk_mean,
+    calculate_z_scores,
+    run_normalization,
+)
 from app.models.schemas import JudgeScoreEntry
 from tests.fixtures.synthetic_dataset import generate_synthetic_tournament
 
@@ -94,6 +98,61 @@ def test_baseline_statistics_preserve_numpy_nan_behavior_for_insufficient_sample
         assert normalization.calculate_mean([5]) == pytest.approx(5.0)
         assert np.isnan(normalization.calculate_sample_variance([5]))
         assert np.isnan(normalization.calculate_sample_std([5]))
+
+
+def test_shrunk_mean_matches_known_worked_example():
+    assert calculate_shrunk_mean(4.0, 2, 6.25) == pytest.approx(5.35)
+
+
+def test_shrunk_mean_uses_global_mean_for_zero_observations():
+    assert calculate_shrunk_mean(4.0, 0, 6.25) == 6.25
+
+
+def test_shrunk_mean_converges_to_judge_mean_for_large_sample():
+    assert calculate_shrunk_mean(4.0, 10**12, 6.25) == pytest.approx(4.0, abs=1e-9)
+
+
+def test_shrunk_mean_is_neutral_when_means_match():
+    for sample_size in (0, 1, 10, 100):
+        assert calculate_shrunk_mean(5.0, sample_size, 5.0) == 5.0
+
+
+def test_stronger_prior_pulls_more_toward_global_mean():
+    results = [calculate_shrunk_mean(4.0, 2, 6.0, prior_k=k) for k in (1.0, 3.0, 10.0)]
+
+    assert results[0] < results[1] < results[2] < 6.0
+
+
+def test_shrunk_mean_is_deterministic():
+    expected = calculate_shrunk_mean(4.0, 2, 6.25)
+
+    for _ in range(100):
+        assert calculate_shrunk_mean(4.0, 2, 6.25) == expected
+
+
+@pytest.mark.parametrize("judge_mean, global_mean", [(4.0, 6.25), (8.0, 6.25)])
+def test_shrunk_mean_lies_between_judge_and_global_means(judge_mean, global_mean):
+    result = calculate_shrunk_mean(judge_mean, 2, global_mean)
+
+    assert min(judge_mean, global_mean) <= result <= max(judge_mean, global_mean)
+
+
+def test_shrunk_mean_allows_zero_prior_for_positive_sample_size():
+    assert calculate_shrunk_mean(4.0, 2, 6.25, prior_k=0.0) == 4.0
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        (4.0, 2, 6.25, -1.0),
+        (4.0, 2, 6.25, np.nan),
+        (np.inf, 2, 6.25, 3.0),
+        (4.0, 2, np.inf, 3.0),
+    ],
+)
+def test_shrunk_mean_rejects_invalid_prior_or_non_finite_inputs(arguments):
+    with pytest.raises(ValueError):
+        calculate_shrunk_mean(*arguments)
 
 
 def _matrix(scores, mask=None):

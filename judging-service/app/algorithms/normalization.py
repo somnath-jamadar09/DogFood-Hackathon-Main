@@ -113,6 +113,36 @@ def calculate_mean(scores: Sequence[float]) -> float:
     return float(np.mean(scores))
 
 
+def calculate_shrunk_mean(
+    judge_mean: float,
+    sample_size: int,
+    global_mean: float,
+    prior_k: float = 3.0,
+) -> float:
+    """Return an empirical-Bayes mean using ``prior_k`` pseudo-observations."""
+    try:
+        judge_mean = float(judge_mean)
+        sample_size = float(sample_size)
+        global_mean = float(global_mean)
+        prior_k = float(prior_k)
+    except (TypeError, ValueError) as error:
+        raise ValueError("shrinkage parameters must be numeric") from error
+
+    if not all(np.isfinite(value) for value in (judge_mean, sample_size, global_mean, prior_k)):
+        raise ValueError("shrinkage parameters must be finite")
+    if sample_size < 0:
+        raise ValueError("sample_size must be non-negative")
+    if prior_k < 0:
+        raise ValueError("prior_k must be non-negative")
+    if sample_size == 0:
+        return global_mean
+
+    return float(
+        (sample_size * judge_mean + prior_k * global_mean)
+        / (sample_size + prior_k)
+    )
+
+
 def calculate_sample_variance(scores: Sequence[float]) -> float:
     """Return sample variance with NumPy's nan result for fewer than two values."""
     return float(np.var(scores, ddof=1))
