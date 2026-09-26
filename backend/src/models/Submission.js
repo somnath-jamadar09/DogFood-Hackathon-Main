@@ -21,6 +21,11 @@ const SubmissionSchema = new mongoose.Schema(
       required: [true, 'Submission tagline is required'],
       trim: true,
       maxlength: [250, 'Tagline cannot exceed 250 characters'],
+      alias: 'pitch',
+    },
+    event: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Event',
     },
     track: {
       type: String,

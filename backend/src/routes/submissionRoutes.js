@@ -41,4 +41,10 @@ router.post(
   submissionController.finalizeSubmission
 );
 
+router.post(
+  '/:id/finalize',
+  roleGuard('participant', 'organizer', 'admin'),
+  submissionController.finalizeSubmission
+);
+
 module.exports = router;
