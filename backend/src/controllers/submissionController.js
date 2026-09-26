@@ -18,11 +18,27 @@ exports.upsertSubmission = async (req, res, next) => {
       return res.status(404).json({ success: false, error: 'Team not found.' });
     }
 
-    const { title, tagline, repoUrl, demoUrl, descriptionMarkdown, thumbnailPath } = req.body;
+    const {
+      title,
+      tagline,
+      repoUrl,
+      githubUrl,
+      demoUrl,
+      demoVideoUrl,
+      descriptionMarkdown,
+      description,
+      thumbnailPath,
+      thumbnailUrl,
+    } = req.body;
 
-    let submission = await Submission.findOne({ teamId: team._id });
+    const gitUrl = githubUrl !== undefined ? githubUrl : repoUrl;
+    const videoUrl = demoVideoUrl !== undefined ? demoVideoUrl : demoUrl;
+    const desc = description !== undefined ? description : descriptionMarkdown;
+    const thumb = thumbnailUrl !== undefined ? thumbnailUrl : thumbnailPath;
 
-    if (submission && submission.status === 'locked') {
+    let submission = await Submission.findOne({ team: team._id });
+
+    if (submission && (submission.status === 'submitted' || submission.status === 'locked')) {
       return res.status(423).json({
         success: false,
         error: 'This submission is locked and can no longer be edited.',
@@ -31,23 +47,23 @@ exports.upsertSubmission = async (req, res, next) => {
 
     if (!submission) {
       submission = await Submission.create({
-        teamId: team._id,
+        team: team._id,
         title: title || `${team.name}'s Project`,
         tagline: tagline || 'Work in progress',
         track: team.track,
-        repoUrl: repoUrl || 'https://github.com',
-        demoUrl: demoUrl || '',
-        descriptionMarkdown: descriptionMarkdown || '# Project Overview\nDescribe your project here.',
-        thumbnailPath: thumbnailPath || '/uploads/default-thumbnail.webp',
+        githubUrl: gitUrl || 'https://github.com',
+        demoVideoUrl: videoUrl || '',
+        description: desc || '# Project Overview\nDescribe your project here.',
+        thumbnailUrl: thumb || '/uploads/default-thumbnail.webp',
         status: 'draft',
       });
     } else {
       if (title !== undefined) submission.title = title;
       if (tagline !== undefined) submission.tagline = tagline;
-      if (repoUrl !== undefined) submission.repoUrl = repoUrl;
-      if (demoUrl !== undefined) submission.demoUrl = demoUrl;
-      if (descriptionMarkdown !== undefined) submission.descriptionMarkdown = descriptionMarkdown;
-      if (thumbnailPath !== undefined) submission.thumbnailPath = thumbnailPath;
+      if (gitUrl !== undefined) submission.githubUrl = gitUrl;
+      if (videoUrl !== undefined) submission.demoVideoUrl = videoUrl;
+      if (desc !== undefined) submission.description = desc;
+      if (thumb !== undefined) submission.thumbnailUrl = thumb;
       await submission.save();
     }
 
@@ -88,13 +104,17 @@ exports.finalizeSubmission = async (req, res, next) => {
     }
 
     const team = await Team.findById(req.user.teamId);
-    const submission = await Submission.findOne({ teamId: team._id });
+    const submission = await Submission.findOne({ team: team._id });
 
     if (!submission) {
       return res.status(404).json({ success: false, error: 'No submission found to finalize.' });
     }
 
-    if (!submission.title || !submission.repoUrl || !submission.descriptionMarkdown) {
+    if (
+      !submission.title ||
+      (!submission.githubUrl && !submission.repoUrl) ||
+      (!submission.description && !submission.descriptionMarkdown)
+    ) {
       return res.status(400).json({
         success: false,
         error: 'Title, repository URL, and project markdown description are required to finalize.',
@@ -144,6 +164,7 @@ exports.getGallery = async (req, res, next) => {
     }
 
     const submissions = await Submission.find(filter)
+      .populate('team', 'name members')
       .populate('teamId', 'name members')
       .sort({ publicVoteCount: -1, createdAt: -1 });
 
@@ -159,7 +180,9 @@ exports.getGallery = async (req, res, next) => {
 exports.getSubmissionById = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const submission = await Submission.findById(id).populate('teamId', 'name members');
+    const submission = await Submission.findById(id)
+      .populate('team', 'name members')
+      .populate('teamId', 'name members');
 
     if (!submission) {
       return res.status(404).json({ success: false, error: 'Project submission not found.' });
