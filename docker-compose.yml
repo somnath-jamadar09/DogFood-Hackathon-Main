@@ -1,5 +1,3 @@
-version: '3.8'
-
 networks:
   dogfood-net:
     driver: bridge
@@ -32,7 +30,7 @@ services:
           memory: 1536M
           cpus: '1.0'
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -57,7 +55,7 @@ services:
           memory: 1024M
           cpus: '1.0'
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -83,6 +81,8 @@ services:
       - JWT_SECRET=raptors-offline-cryptographic-master-key-2026
       - JWT_EXPIRES_IN=1h
       - REFRESH_SECRET=raptors-refresh-token-secret-salt-2026
+      - REFRESH_EXPIRES_IN=7d
+      - CLIENT_URL=http://localhost:3000
     deploy:
       resources:
         limits:
