@@ -3,8 +3,9 @@ import warnings
 import numpy as np
 import pytest
 from app.algorithms import normalization
-from app.algorithms.normalization import run_normalization
+from app.algorithms.normalization import calculate_z_scores, run_normalization
 from app.models.schemas import JudgeScoreEntry
+from tests.fixtures.synthetic_dataset import generate_synthetic_tournament
 
 def test_normalization_worked_example_neutralizes_evaluator_bias():
     # 2 Judges: Judge A (tough), Judge B (lenient)
@@ -93,6 +94,110 @@ def test_baseline_statistics_preserve_numpy_nan_behavior_for_insufficient_sample
         assert normalization.calculate_mean([5]) == pytest.approx(5.0)
         assert np.isnan(normalization.calculate_sample_variance([5]))
         assert np.isnan(normalization.calculate_sample_std([5]))
+
+
+def _matrix(scores, mask=None):
+    values = np.asarray(scores, dtype=float)
+    if values.ndim == 1:
+        values = values[None, :, None]
+    elif values.ndim == 2:
+        values = values[:, :, None]
+    if mask is None:
+        mask = np.isfinite(values)
+    return values, np.asarray(mask, dtype=bool)
+
+
+def test_z_scores_match_known_sample_with_epsilon():
+    values, mask = _matrix([1, 2, 3, 4, 5])
+
+    result = calculate_z_scores(values, mask)
+    denominator = np.sqrt(2.5) + 1e-6
+
+    np.testing.assert_allclose(
+        result[0, :, 0],
+        [(-2) / denominator, (-1) / denominator, 0.0, 1 / denominator, 2 / denominator],
+    )
+
+
+def test_z_scores_have_zero_mean():
+    values, mask = _matrix([2, 5, 9, 12])
+
+    result = calculate_z_scores(values, mask)
+
+    assert np.mean(result[0, :, 0]) == pytest.approx(0.0)
+
+
+def test_z_scores_have_unit_sample_standard_deviation():
+    values, mask = _matrix([2, 5, 9, 12])
+
+    result = calculate_z_scores(values, mask)
+
+    assert np.std(result[0, :, 0], ddof=1) == pytest.approx(1.0)
+
+
+def test_z_scores_with_zero_variance_are_zero():
+    values, mask = _matrix([5, 5, 5, 5])
+
+    result = calculate_z_scores(values, mask)
+
+    np.testing.assert_allclose(result[0, :, 0], 0.0)
+
+
+def test_z_scores_ignore_and_preserve_masked_observations():
+    values, mask = _matrix([1, 999, 3, 5])
+    mask[0, 1, 0] = False
+    values[0, 1, 0] = np.nan
+
+    result = calculate_z_scores(values, mask)
+
+    denominator = 2.0 + 1e-6
+    np.testing.assert_allclose(
+        result[0, [0, 2, 3], 0], [-2.0 / denominator, 0.0, 2.0 / denominator]
+    )
+    assert np.isnan(result[0, 1, 0])
+
+
+def test_z_scores_remove_different_judge_severity():
+    values, mask = _matrix([[4, 5, 6], [8, 9, 10]])
+
+    result = calculate_z_scores(values, mask)
+
+    np.testing.assert_allclose(result[0, :, 0], result[1, :, 0])
+
+
+def test_z_scores_are_deterministic():
+    values, mask = _matrix([1, 2, 3, 4, 5])
+
+    first = calculate_z_scores(values, mask)
+    second = calculate_z_scores(values, mask)
+
+    np.testing.assert_array_equal(first, second)
+
+
+def test_z_scores_support_synthetic_dataset_subset():
+    tournament = generate_synthetic_tournament()
+    judges = tournament.judges[:3]
+    submissions = tournament.submissions
+    judge_indexes = {judge.judge_id: index for index, judge in enumerate(judges)}
+    submission_indexes = {
+        submission.submission_id: index for index, submission in enumerate(submissions)
+    }
+    values = np.full((len(judges), len(submissions), 1), np.nan)
+    mask = np.zeros(values.shape, dtype=bool)
+
+    for score in tournament.scores:
+        if score.judge_id not in judge_indexes:
+            continue
+        judge_index = judge_indexes[score.judge_id]
+        submission_index = submission_indexes[score.submission_id]
+        values[judge_index, submission_index, 0] = score.raw_composite_score
+        mask[judge_index, submission_index, 0] = True
+
+    result = calculate_z_scores(values, mask)
+
+    assert result.shape == values.shape
+    assert np.isfinite(result[mask]).all()
+    assert np.isnan(result[~mask]).all()
 
 
 def _evaluation(judge_id, submission_id, scores):

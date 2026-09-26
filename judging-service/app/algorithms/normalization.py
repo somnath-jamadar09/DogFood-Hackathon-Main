@@ -123,6 +123,56 @@ def calculate_sample_std(scores: Sequence[float]) -> float:
     return float(np.std(scores, ddof=1))
 
 
+Z_SCORE_EPSILON = 1e-6
+
+
+def calculate_z_scores(
+    scores: np.ndarray,
+    mask: np.ndarray | None = None,
+) -> np.ndarray:
+    """Normalize each judge's observed scores with sample standard deviation.
+
+    Inputs may be one judge's scores, a ``[judge, submission]`` matrix, or the
+    WBS-17 ``[judge, submission, criterion]`` matrix. Missing cells are kept as
+    ``NaN`` and never participate in a judge's statistics.
+    """
+    values = np.asarray(scores, dtype=float)
+    if values.ndim not in (1, 2, 3):
+        raise ValueError("scores must be one-, two-, or three-dimensional")
+
+    observed = np.isfinite(values) if mask is None else np.asarray(mask, dtype=bool)
+    if observed.shape != values.shape:
+        raise ValueError("mask must have the same shape as scores")
+
+    result = np.full(values.shape, np.nan, dtype=float)
+    if values.ndim == 1:
+        groups = ((values, observed, result),)
+    elif values.ndim == 2:
+        groups = (
+            (values[judge_index], observed[judge_index], result[judge_index])
+            for judge_index in range(values.shape[0])
+        )
+    else:
+        groups = (
+            (values[judge_index, :, criterion_index],
+             observed[judge_index, :, criterion_index],
+             result[judge_index, :, criterion_index])
+            for judge_index in range(values.shape[0])
+            for criterion_index in range(values.shape[2])
+        )
+
+    for judge_scores, judge_mask, judge_result in groups:
+        valid = judge_mask & np.isfinite(judge_scores)
+        if np.count_nonzero(valid) < 2:
+            continue
+        observed_scores = judge_scores[valid]
+        mean = calculate_mean(observed_scores)
+        std = calculate_sample_std(observed_scores)
+        judge_result[valid] = (observed_scores - mean) / (std + Z_SCORE_EPSILON)
+
+    return result
+
+
 def run_normalization(scores: List[JudgeScoreEntry], bayesian_prior_k: float = 3.0) -> NormalizationResponse:
     if not scores:
         return NormalizationResponse(
