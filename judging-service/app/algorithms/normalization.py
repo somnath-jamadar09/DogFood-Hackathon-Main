@@ -1,7 +1,23 @@
 import numpy as np
 import pandas as pd
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Sequence
 from ..models.schemas import JudgeScoreEntry, NormalizationResponse, JudgeCalibrationMetric, ProjectStanding
+
+
+def calculate_mean(scores: Sequence[float]) -> float:
+    """Return the arithmetic mean, preserving NumPy behavior for empty input."""
+    return float(np.mean(scores))
+
+
+def calculate_sample_variance(scores: Sequence[float]) -> float:
+    """Return sample variance with NumPy's nan result for fewer than two values."""
+    return float(np.var(scores, ddof=1))
+
+
+def calculate_sample_std(scores: Sequence[float]) -> float:
+    """Return sample standard deviation with NumPy's nan result for fewer than two values."""
+    return float(np.std(scores, ddof=1))
+
 
 def run_normalization(scores: List[JudgeScoreEntry], bayesian_prior_k: float = 3.0) -> NormalizationResponse:
     if not scores:
