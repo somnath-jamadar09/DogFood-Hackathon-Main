@@ -5,11 +5,21 @@ const authMiddleware = require('../middleware/authMiddleware');
 const roleGuard = require('../middleware/roleGuard');
 const upload = require('../config/multer');
 
-// Public route: gallery and view submission
+// Public route: gallery
 router.get('/gallery', submissionController.getGallery);
+
+// Authenticated route: team's own submission (placed before /:id parameter match)
+router.get(
+  '/my-submission',
+  authMiddleware,
+  roleGuard('participant', 'organizer', 'admin'),
+  submissionController.getMySubmission
+);
+
+// Public route: view submission by ID
 router.get('/:id', submissionController.getSubmissionById);
 
-// Participant routes
+// Participant authenticated mutation routes
 router.use(authMiddleware);
 
 router.post(

@@ -49,6 +49,7 @@ mongo_data/
 # Multer uploads (preserve folder, ignore contents)
 backend/uploads/*
 !backend/uploads/.gitkeep
+!backend/uploads/default-thumbnail.webp
 !backend/uploads/thumbnails/
 backend/uploads/thumbnails/*
 !backend/uploads/thumbnails/.gitkeep
