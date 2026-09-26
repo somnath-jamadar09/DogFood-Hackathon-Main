@@ -333,22 +333,23 @@ exports.finalizeSubmission = async (req, res, next) => {
   }
 };
 
-exports.getGallery = async (req, res, next) => {
+exports.getPublicSubmissions = async (req, res, next) => {
   try {
-    const { track, search } = req.query;
+    const { track, search, q } = req.query;
     const filter = { status: { $in: ['submitted', 'locked'] } };
 
     if (track && track !== 'All') {
       filter.track = track;
     }
 
-    if (search && search.trim() !== '') {
-      filter.$text = { $search: search.trim() };
+    const searchTerm = (search || q || '').trim();
+    if (searchTerm) {
+      filter.$text = { $search: searchTerm };
     }
 
     const submissions = await Submission.find(filter)
-      .populate('team', 'name members')
-      .populate('teamId', 'name members')
+      .populate('team', 'name track members')
+      .populate('teamId', 'name track members')
       .sort({ publicVoteCount: -1, createdAt: -1 });
 
     return res.status(200).json({
@@ -360,6 +361,8 @@ exports.getGallery = async (req, res, next) => {
   }
 };
 
+exports.getGallery = exports.getPublicSubmissions;
+
 exports.getSubmissionById = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -368,8 +371,8 @@ exports.getSubmissionById = async (req, res, next) => {
     }
 
     const submission = await Submission.findById(id)
-      .populate('team', 'name members')
-      .populate('teamId', 'name members');
+      .populate('team', 'name track members')
+      .populate('teamId', 'name track members');
 
     if (!submission) {
       return res.status(404).json({ success: false, error: 'Project submission not found.' });

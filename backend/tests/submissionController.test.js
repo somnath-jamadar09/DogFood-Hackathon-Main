@@ -509,5 +509,137 @@ describe('Submission Controller & Static Serving Unit Tests', () => {
       expect(res.body.success).toBe(false);
       expect(res.body.error).toMatch(/Authentication token required/i);
     });
+
+    it('GET /api/v1/submissions/public is accessible publicly and not intercepted by /:id', async () => {
+      const mockFindQuery = {
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockResolvedValue([]),
+      };
+      jest.spyOn(Submission, 'find').mockReturnValue(mockFindQuery);
+
+      const res = await request(app).get('/api/v1/submissions/public');
+      expect(res.statusCode).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.submissions).toEqual([]);
+      expect(res.body.data.total).toBe(0);
+    });
+  });
+
+  describe('GET /api/v1/submissions/public (getPublicSubmissions)', () => {
+    it('returns all finalized submissions with selected team and track metadata', async () => {
+      const mockSubmissions = [
+        {
+          _id: new mongoose.Types.ObjectId(),
+          title: 'Neural Raptor',
+          tagline: 'ML evaluator',
+          track: 'AI/ML',
+          status: 'submitted',
+          team: {
+            _id: dummyTeamId,
+            name: 'CyberDinos',
+            track: 'AI/ML',
+            members: [dummyUserId],
+          },
+        },
+      ];
+
+      const mockFindQuery = {
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockResolvedValue(mockSubmissions),
+      };
+      jest.spyOn(Submission, 'find').mockReturnValue(mockFindQuery);
+
+      req.query = {};
+      await submissionController.getPublicSubmissions(req, res, next);
+
+      expect(Submission.find).toHaveBeenCalledWith({ status: { $in: ['submitted', 'locked'] } });
+      expect(mockFindQuery.populate).toHaveBeenCalledWith('team', 'name track members');
+      expect(mockFindQuery.populate).toHaveBeenCalledWith('teamId', 'name track members');
+      expect(mockFindQuery.sort).toHaveBeenCalledWith({ publicVoteCount: -1, createdAt: -1 });
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        data: {
+          submissions: mockSubmissions,
+          total: 1,
+        },
+      });
+    });
+
+    it('filters by track when track query parameter is provided and not "All"', async () => {
+      const mockFindQuery = {
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockResolvedValue([]),
+      };
+      jest.spyOn(Submission, 'find').mockReturnValue(mockFindQuery);
+
+      req.query = { track: 'HealthTech' };
+      await submissionController.getPublicSubmissions(req, res, next);
+
+      expect(Submission.find).toHaveBeenCalledWith({
+        status: { $in: ['submitted', 'locked'] },
+        track: 'HealthTech',
+      });
+    });
+
+    it('applies full-text search indexing filter when search query parameter is provided', async () => {
+      const mockFindQuery = {
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockResolvedValue([]),
+      };
+      jest.spyOn(Submission, 'find').mockReturnValue(mockFindQuery);
+
+      req.query = { search: 'telemetry diagnostics' };
+      await submissionController.getPublicSubmissions(req, res, next);
+
+      expect(Submission.find).toHaveBeenCalledWith({
+        status: { $in: ['submitted', 'locked'] },
+        $text: { $search: 'telemetry diagnostics' },
+      });
+    });
+
+    it('supports q parameter as alias for search', async () => {
+      const mockFindQuery = {
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockResolvedValue([]),
+      };
+      jest.spyOn(Submission, 'find').mockReturnValue(mockFindQuery);
+
+      req.query = { q: 'blockchain' };
+      await submissionController.getPublicSubmissions(req, res, next);
+
+      expect(Submission.find).toHaveBeenCalledWith({
+        status: { $in: ['submitted', 'locked'] },
+        $text: { $search: 'blockchain' },
+      });
+    });
+
+    it('combines track and text search filters correctly', async () => {
+      const mockFindQuery = {
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockResolvedValue([]),
+      };
+      jest.spyOn(Submission, 'find').mockReturnValue(mockFindQuery);
+
+      req.query = { track: 'AI/ML', search: 'raptor' };
+      await submissionController.getPublicSubmissions(req, res, next);
+
+      expect(Submission.find).toHaveBeenCalledWith({
+        status: { $in: ['submitted', 'locked'] },
+        track: 'AI/ML',
+        $text: { $search: 'raptor' },
+      });
+    });
+
+    it('handles exceptions and calls next(error)', async () => {
+      const dbError = new Error('Database failure');
+      jest.spyOn(Submission, 'find').mockImplementation(() => {
+        throw dbError;
+      });
+
+      await submissionController.getPublicSubmissions(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(dbError);
+    });
   });
 });

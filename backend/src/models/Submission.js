@@ -83,7 +83,7 @@ const SubmissionSchema = new mongoose.Schema(
 );
 
 // Full-text search index for public gallery
-SubmissionSchema.index({ title: 'text', tagline: 'text' });
+SubmissionSchema.index({ title: 'text', tagline: 'text', track: 'text' });
 
 // Query middleware to transparently map legacy teamId queries to team
 SubmissionSchema.pre(
