@@ -39,8 +39,8 @@ exports.assignJudges = async (req, res, next) => {
       targetPerProject
     );
 
-    // Clear existing pending assignments to prevent duplicates
-    await JudgeAssignment.deleteMany({ status: 'pending' });
+    // Clear existing uncompleted assignments to prevent duplicates
+    await JudgeAssignment.deleteMany({ status: { $in: ['assigned', 'pending'] } });
 
     // Insert new assignments
     await JudgeAssignment.insertMany(assignments, { ordered: false }).catch(() => {});

@@ -20,8 +20,8 @@ const JudgeAssignmentSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['pending', 'completed'],
-      default: 'pending',
+      enum: ['assigned', 'in_progress', 'completed', 'pending'],
+      default: 'assigned',
       index: true,
     },
   },
