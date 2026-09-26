@@ -607,4 +607,166 @@ describe('Team Controller Unit Tests', () => {
       );
     });
   });
+
+  describe('Database Transaction & Concurrent Multi-Team Prevention Logic', () => {
+    let mockSession;
+
+    beforeEach(() => {
+      mockSession = {
+        startTransaction: jest.fn(),
+        commitTransaction: jest.fn().mockResolvedValue(true),
+        abortTransaction: jest.fn().mockResolvedValue(true),
+        endSession: jest.fn().mockResolvedValue(true),
+        inTransaction: jest.fn().mockReturnValue(true),
+      };
+      jest.spyOn(mongoose, 'startSession').mockResolvedValue(mockSession);
+    });
+
+    it('should prevent concurrent active team joins and abort transaction when race condition occurs', async () => {
+      req.body = { joinCode: 'RAPTOR' };
+      const team = {
+        _id: new mongoose.Types.ObjectId(),
+        name: 'Raptor Squad',
+        members: [new mongoose.Types.ObjectId()],
+        save: jest.fn().mockResolvedValue(true),
+      };
+
+      jest.spyOn(User, 'findById').mockResolvedValue(req.user);
+      jest.spyOn(Team, 'findOne').mockImplementation((query) => {
+        if (query.members) return Promise.resolve(null);
+        if (query.joinCode) return Promise.resolve(team);
+        return Promise.resolve(null);
+      });
+      // Simulate another concurrent transaction having already set teamId (User not found with teamId: null)
+      jest.spyOn(User, 'findOneAndUpdate').mockResolvedValue(null);
+
+      await teamController.joinTeam(req, res, next);
+
+      expect(mockSession.startTransaction).toHaveBeenCalled();
+      expect(mockSession.abortTransaction).toHaveBeenCalled();
+      expect(mockSession.endSession).toHaveBeenCalled();
+      expect(mockSession.commitTransaction).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          error: expect.stringMatching(/already in a team/i),
+        })
+      );
+    });
+
+    it('should successfully commit transaction and end session when joining a team', async () => {
+      req.body = { joinCode: 'RAPTOR' };
+      const captainId = new mongoose.Types.ObjectId();
+      const team = {
+        _id: new mongoose.Types.ObjectId(),
+        name: 'Raptor Squad',
+        captain: captainId,
+        members: [captainId],
+        save: jest.fn().mockResolvedValue(true),
+        populate: jest.fn().mockResolvedValue(true),
+      };
+
+      jest.spyOn(User, 'findById').mockResolvedValue(req.user);
+      jest.spyOn(Team, 'findOne').mockImplementation((query) => {
+        if (query.members) return Promise.resolve(null);
+        if (query.joinCode) return Promise.resolve(team);
+        return Promise.resolve(null);
+      });
+      jest.spyOn(User, 'findOneAndUpdate').mockResolvedValue(req.user);
+      jest.spyOn(User, 'findByIdAndUpdate').mockResolvedValue(req.user);
+
+      await teamController.joinTeam(req, res, next);
+
+      expect(mockSession.startTransaction).toHaveBeenCalled();
+      expect(mockSession.commitTransaction).toHaveBeenCalled();
+      expect(mockSession.abortTransaction).not.toHaveBeenCalled();
+      expect(mockSession.endSession).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('should abort transaction when team reaches 4 members capacity concurrently', async () => {
+      req.body = { joinCode: 'RAPTOR' };
+      const fullTeam = {
+        _id: new mongoose.Types.ObjectId(),
+        name: 'Full Team',
+        members: [
+          new mongoose.Types.ObjectId(),
+          new mongoose.Types.ObjectId(),
+          new mongoose.Types.ObjectId(),
+          new mongoose.Types.ObjectId(),
+        ],
+      };
+
+      jest.spyOn(User, 'findById').mockResolvedValue(req.user);
+      jest.spyOn(Team, 'findOne').mockImplementation((query) => {
+        if (query.members) return Promise.resolve(null);
+        if (query.joinCode) return Promise.resolve(fullTeam);
+        return Promise.resolve(null);
+      });
+
+      await teamController.joinTeam(req, res, next);
+
+      expect(mockSession.startTransaction).toHaveBeenCalled();
+      expect(mockSession.abortTransaction).toHaveBeenCalled();
+      expect(mockSession.endSession).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          error: expect.stringMatching(/maximum limit of 4 members/i),
+        })
+      );
+    });
+
+    it('should execute removeMember inside transaction and commit atomically', async () => {
+      const targetUserId = new mongoose.Types.ObjectId();
+      req.params = { userId: targetUserId.toString() };
+      const team = {
+        _id: new mongoose.Types.ObjectId(),
+        captain: req.user._id,
+        members: [req.user._id, targetUserId],
+        save: jest.fn().mockResolvedValue(true),
+        populate: jest.fn().mockResolvedValue(true),
+        toObject: jest.fn().mockReturnValue({
+          _id: new mongoose.Types.ObjectId(),
+          captain: req.user._id,
+          members: [req.user._id],
+        }),
+      };
+
+      jest.spyOn(Team, 'findOne').mockResolvedValue(team);
+      jest.spyOn(User, 'findByIdAndUpdate').mockResolvedValue({});
+
+      await teamController.removeMember(req, res, next);
+
+      expect(mockSession.startTransaction).toHaveBeenCalled();
+      expect(mockSession.commitTransaction).toHaveBeenCalled();
+      expect(mockSession.abortTransaction).not.toHaveBeenCalled();
+      expect(mockSession.endSession).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('should abort transaction during removeMember if an error occurs', async () => {
+      const targetUserId = new mongoose.Types.ObjectId();
+      req.params = { userId: targetUserId.toString() };
+      const team = {
+        _id: new mongoose.Types.ObjectId(),
+        captain: req.user._id,
+        members: [req.user._id, targetUserId],
+        save: jest.fn().mockRejectedValue(new Error('Database write error during team save')),
+      };
+
+      jest.spyOn(Team, 'findOne').mockResolvedValue(team);
+      jest.spyOn(User, 'findByIdAndUpdate').mockResolvedValue({});
+
+      await teamController.removeMember(req, res, next);
+
+      expect(mockSession.startTransaction).toHaveBeenCalled();
+      expect(mockSession.abortTransaction).toHaveBeenCalled();
+      expect(mockSession.endSession).toHaveBeenCalled();
+      expect(next).toHaveBeenCalledWith(expect.any(Error));
+    });
+  });
 });
+

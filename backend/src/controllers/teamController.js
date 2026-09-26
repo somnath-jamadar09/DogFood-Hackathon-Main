@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const Team = require('../models/Team');
 const User = require('../models/User');
 const Submission = require('../models/Submission');
+const { withTransaction, TransactionHttpError } = require('../utils/transaction');
 
 // Helper to generate random 6-character uppercase alphanumeric join code (e.g. RAPTOR, K9D8W2)
 const generateJoinCode = () => {
@@ -35,6 +36,8 @@ exports.createTeam = async (req, res, next) => {
       });
     }
 
+    const userId = (req.user._id || req.user.id).toString();
+
     if (req.user.teamId) {
       const existingTeam = await Team.findById(req.user.teamId);
       if (existingTeam) {
@@ -45,84 +48,137 @@ exports.createTeam = async (req, res, next) => {
       } else {
         // Clean up stale reference
         req.user.teamId = null;
-        await User.findByIdAndUpdate(req.user._id, { teamId: null });
+        await User.findByIdAndUpdate(userId, { teamId: null });
       }
     }
 
     const existingMembership = await Team.findOne({ members: req.user._id });
     if (existingMembership) {
       req.user.teamId = existingMembership._id;
-      await req.user.save();
+      if (typeof req.user.save === 'function') await req.user.save();
       return res.status(400).json({
         success: false,
         error: 'You are already a member of a team. Leave your current team first.',
       });
     }
 
-    // DB Collision retry loop for unique 6-character uppercase alphanumeric join code
-    const MAX_RETRIES = 10;
-    let team = null;
-    let attempts = 0;
+    // Execute team creation within a database transaction session
+    const team = await withTransaction(async (session) => {
+      if (session) {
+        // Re-verify user within transaction to prevent concurrent team creation/joining
+        const userCheck = await User.findById(userId, null, { session });
+        if (userCheck && userCheck.teamId) {
+          const teamCheck = await Team.findById(userCheck.teamId, null, { session });
+          if (teamCheck) {
+            throw new TransactionHttpError(400, 'You are already a member of a team. Leave your current team first.');
+          }
+        }
 
-    while (attempts < MAX_RETRIES) {
-      attempts++;
-      const joinCode = generateJoinCode();
-
-      // Check DB for join code collision before insert
-      const codeExists = await Team.findOne({ joinCode });
-      if (codeExists) {
-        continue;
+        const memberCheck = await Team.findOne({ members: req.user._id }, null, { session });
+        if (memberCheck) {
+          throw new TransactionHttpError(400, 'You are already a member of a team. Leave your current team first.');
+        }
       }
 
-      try {
-        team = await Team.create({
-          name: name.trim(),
-          track: track.trim(),
-          captain: req.user._id,
-          members: [req.user._id],
-          joinCode,
-        });
-        break;
-      } catch (err) {
-        // If duplicate key error on joinCode (race condition / DB collision), retry
-        const isJoinCodeCollision =
-          err.code === 11000 &&
-          (err.keyPattern?.joinCode ||
-            (err.keyValue && 'joinCode' in err.keyValue) ||
-            (err.message && err.message.includes('joinCode')));
+      // DB Collision retry loop for unique 6-character uppercase alphanumeric join code
+      const MAX_RETRIES = 10;
+      let newTeam = null;
+      let attempts = 0;
 
-        if (isJoinCodeCollision && attempts < MAX_RETRIES) {
+      while (attempts < MAX_RETRIES) {
+        attempts++;
+        const joinCode = generateJoinCode();
+
+        // Check DB for join code collision before insert
+        const codeExists = session
+          ? await Team.findOne({ joinCode }, null, { session })
+          : await Team.findOne({ joinCode });
+        if (codeExists) {
           continue;
         }
 
-        // Duplicate team name collision
-        const isNameCollision =
-          err.code === 11000 &&
-          (err.keyPattern?.name ||
-            (err.keyValue && 'name' in err.keyValue) ||
-            (err.message && err.message.includes('name')));
+        try {
+          if (session) {
+            const created = await Team.create(
+              [
+                {
+                  name: name.trim(),
+                  track: track.trim(),
+                  captain: req.user._id,
+                  members: [req.user._id],
+                  joinCode,
+                },
+              ],
+              { session }
+            );
+            newTeam = Array.isArray(created) ? created[0] : created;
+          } else {
+            newTeam = await Team.create({
+              name: name.trim(),
+              track: track.trim(),
+              captain: req.user._id,
+              members: [req.user._id],
+              joinCode,
+            });
+          }
+          break;
+        } catch (err) {
+          // If duplicate key error on joinCode (race condition / DB collision), retry
+          const isJoinCodeCollision =
+            err.code === 11000 &&
+            (err.keyPattern?.joinCode ||
+              (err.keyValue && 'joinCode' in err.keyValue) ||
+              (err.message && err.message.includes('joinCode')));
 
-        if (isNameCollision) {
-          return res.status(400).json({
-            success: false,
-            error: 'A team with this name already exists. Please choose another name.',
-          });
+          if (isJoinCodeCollision && attempts < MAX_RETRIES) {
+            continue;
+          }
+
+          // Duplicate team name collision
+          const isNameCollision =
+            err.code === 11000 &&
+            (err.keyPattern?.name ||
+              (err.keyValue && 'name' in err.keyValue) ||
+              (err.message && err.message.includes('name')));
+
+          if (isNameCollision) {
+            throw new TransactionHttpError(400, 'A team with this name already exists. Please choose another name.');
+          }
+
+          throw err;
         }
-
-        throw err;
       }
-    }
 
-    if (!team) {
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to generate a unique team join code after multiple attempts. Please try again.',
-      });
-    }
+      if (!newTeam) {
+        throw new TransactionHttpError(500, 'Failed to generate a unique team join code after multiple attempts. Please try again.');
+      }
+
+      if (session) {
+        // Concurrency lock: Ensure user does not already have a teamId
+        const updatedUser = await User.findOneAndUpdate(
+          { _id: userId, teamId: null },
+          { teamId: newTeam._id },
+          { session, new: true }
+        );
+
+        if (!updatedUser) {
+          throw new TransactionHttpError(400, 'You are already a member of a team. Leave your current team first.');
+        }
+      }
+
+      if (session) {
+        await User.findByIdAndUpdate(userId, { teamId: newTeam._id }, { session });
+      } else {
+        await User.findByIdAndUpdate(userId, { teamId: newTeam._id });
+      }
+
+      return newTeam;
+    });
 
     req.user.teamId = team._id;
-    await req.user.save();
-    await User.findByIdAndUpdate(req.user._id, { teamId: team._id });
+    if (typeof req.user.save === 'function') {
+      await req.user.save();
+    }
 
     return res.status(201).json({
       success: true,
@@ -130,6 +186,12 @@ exports.createTeam = async (req, res, next) => {
       data: { team },
     });
   } catch (error) {
+    if (error instanceof TransactionHttpError || error.status) {
+      return res.status(error.status).json({
+        success: false,
+        error: error.message,
+      });
+    }
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
@@ -137,7 +199,7 @@ exports.createTeam = async (req, res, next) => {
       });
     }
     if (error.name === 'ValidationError') {
-      const messages = Object.values(error.errors).map((e) => e.message);
+      const messages = error.errors ? Object.values(error.errors).map((e) => e.message) : [error.message];
       return res.status(400).json({
         success: false,
         error: messages.join(', '),
@@ -192,36 +254,74 @@ exports.joinTeam = async (req, res, next) => {
       });
     }
 
-    const team = await Team.findOne({ joinCode: formattedCode });
-    if (!team) {
-      return res.status(404).json({
-        success: false,
-        error: 'Team not found with the provided join code.',
-      });
-    }
+    // Execute join inside a database transaction to prevent concurrent joins to multiple active teams
+    const team = await withTransaction(async (session) => {
+      if (session) {
+        const userDoc = await User.findById(userId, null, { session });
+        if (userDoc && userDoc.teamId) {
+          const teamCheck = await Team.findById(userDoc.teamId, null, { session });
+          if (teamCheck) {
+            throw new TransactionHttpError(400, 'You are already in a team. You cannot join another.');
+          } else {
+            await User.findByIdAndUpdate(userId, { teamId: null }, { session });
+          }
+        }
 
-    if (team.members && team.members.length >= 4) {
-      return res.status(400).json({
-        success: false,
-        error: 'This team has already reached the maximum limit of 4 members.',
-      });
-    }
+        const membershipCheck = await Team.findOne({ members: userId }, null, { session });
+        if (membershipCheck) {
+          req.user.teamId = membershipCheck._id;
+          if (typeof req.user.save === 'function') await req.user.save();
+          throw new TransactionHttpError(400, 'You are already in a team. You cannot join another.');
+        }
+      }
 
-    if (team.members && team.members.some((m) => (m._id || m).toString() === userId)) {
-      return res.status(400).json({
-        success: false,
-        error: 'You are already a member of this team.',
-      });
-    }
+      // Find target team
+      const targetTeam = session
+        ? await Team.findOne({ joinCode: formattedCode }, null, { session })
+        : await Team.findOne({ joinCode: formattedCode });
+      if (!targetTeam) {
+        throw new TransactionHttpError(404, 'Team not found with the provided join code.');
+      }
 
-    team.members.push(req.user._id || req.user.id);
-    await team.save();
+      if (targetTeam.members && targetTeam.members.length >= 4) {
+        throw new TransactionHttpError(400, 'This team has already reached the maximum limit of 4 members.');
+      }
 
-    req.user.teamId = team._id;
-    if (typeof req.user.save === 'function') {
-      await req.user.save();
-    }
-    await User.findByIdAndUpdate(userId, { teamId: team._id });
+      if (targetTeam.members && targetTeam.members.some((m) => (m._id || m).toString() === userId)) {
+        throw new TransactionHttpError(400, 'You are already a member of this team.');
+      }
+
+      if (session) {
+        // Concurrency prevention: Atomically lock and update User.teamId with condition { teamId: null }
+        // This prevents a user from joining multiple active teams concurrently via race conditions
+        const updatedUser = await User.findOneAndUpdate(
+          { _id: userId, teamId: null },
+          { teamId: targetTeam._id },
+          { session, new: true }
+        );
+
+        if (!updatedUser) {
+          throw new TransactionHttpError(400, 'You are already in a team. You cannot join another.');
+        }
+      }
+
+      // Update team members list
+      targetTeam.members.push(req.user._id || req.user.id);
+      if (session) {
+        await targetTeam.save({ session });
+        await User.findByIdAndUpdate(userId, { teamId: targetTeam._id }, { session });
+      } else {
+        await targetTeam.save();
+        await User.findByIdAndUpdate(userId, { teamId: targetTeam._id });
+      }
+
+      req.user.teamId = targetTeam._id;
+      if (typeof req.user.save === 'function') {
+        await req.user.save();
+      }
+
+      return targetTeam;
+    });
 
     if (typeof team.populate === 'function') {
       await team.populate('members', 'name fullName email role');
@@ -239,6 +339,12 @@ exports.joinTeam = async (req, res, next) => {
       data: { team: teamObj },
     });
   } catch (error) {
+    if (error instanceof TransactionHttpError || error.status) {
+      return res.status(error.status).json({
+        success: false,
+        error: error.message,
+      });
+    }
     if (error.name === 'ValidationError') {
       return res.status(400).json({
         success: false,
@@ -313,59 +419,93 @@ exports.removeMember = async (req, res, next) => {
       });
     }
 
-    // Find the team containing the target member
-    const team = await Team.findOne({ members: userId });
-    if (!team) {
-      return res.status(404).json({
-        success: false,
-        error: 'Target member is not part of any team.',
-      });
-    }
+    // Execute member removal within a database transaction
+    const removalResult = await withTransaction(async (session) => {
+      // Find the team containing the target member inside transaction
+      const team = session
+        ? await Team.findOne({ members: userId }, null, { session })
+        : await Team.findOne({ members: userId });
+      if (!team) {
+        throw new TransactionHttpError(404, 'Target member is not part of any team.');
+      }
 
-    const captainId = (team.captain._id || team.captain).toString();
-    const isCaptain = captainId === currentUserId;
-    const isSelf = currentUserId === userId.toString();
-    const isAdminOrOrganizer = ['admin', 'organizer'].includes(req.user.role);
+      const captainId = (team.captain._id || team.captain).toString();
+      const isCaptain = captainId === currentUserId;
+      const isSelf = currentUserId === userId.toString();
+      const isAdminOrOrganizer = ['admin', 'organizer'].includes(req.user.role);
 
-    if (!isCaptain && !isSelf && !isAdminOrOrganizer) {
-      return res.status(403).json({
-        success: false,
-        error: 'Forbidden: Only the team captain can remove members, or a member can leave voluntarily.',
-      });
-    }
+      if (!isCaptain && !isSelf && !isAdminOrOrganizer) {
+        throw new TransactionHttpError(
+          403,
+          'Forbidden: Only the team captain can remove members, or a member can leave voluntarily.'
+        );
+      }
 
-    // Remove user from team members
-    team.members = team.members.filter((m) => (m._id || m).toString() !== userId.toString());
+      // Remove user from team members
+      team.members = team.members.filter((m) => (m._id || m).toString() !== userId.toString());
 
-    // Update target user's teamId
-    await User.findByIdAndUpdate(userId, { teamId: null });
-    if (isSelf) {
+      // Update target user's teamId atomically inside transaction
+      if (session) {
+        await User.findByIdAndUpdate(userId, { teamId: null }, { session });
+      } else {
+        await User.findByIdAndUpdate(userId, { teamId: null });
+      }
+
+      // Check if team is now empty
+      if (team.members.length === 0) {
+        if (session) {
+          await Team.findByIdAndDelete(team._id, { session });
+          await Submission.deleteMany({ teamId: team._id, status: 'draft' }, { session });
+        } else {
+          await Team.findByIdAndDelete(team._id);
+          await Submission.deleteMany({ teamId: team._id, status: 'draft' });
+        }
+
+        return {
+          team: null,
+          isSelf,
+          captainId,
+          disbanded: true,
+        };
+      }
+
+      // If captain left, transfer captaincy to first remaining member
+      if (captainId === userId.toString()) {
+        team.captain = team.members[0];
+      }
+
+      if (session) {
+        await team.save({ session });
+      } else {
+        await team.save();
+      }
+
+      return {
+        team,
+        isSelf,
+        captainId,
+        disbanded: false,
+      };
+    });
+
+    if (removalResult.isSelf) {
       req.user.teamId = null;
       if (typeof req.user.save === 'function') {
         await req.user.save();
       }
     }
 
-    // Check if team is now empty
-    if (team.members.length === 0) {
-      await Team.findByIdAndDelete(team._id);
-      await Submission.deleteMany({ teamId: team._id, status: 'draft' });
-
+    if (removalResult.disbanded) {
       return res.status(200).json({
         success: true,
-        message: isSelf
+        message: removalResult.isSelf
           ? 'You have left the team. The team has been disbanded as no members remain.'
           : 'Member removed and team disbanded as no members remain.',
         data: { team: null },
       });
     }
 
-    // If captain left, transfer captaincy to first remaining member
-    if (captainId === userId.toString()) {
-      team.captain = team.members[0];
-    }
-
-    await team.save();
+    const { team, isSelf, captainId } = removalResult;
 
     if (typeof team.populate === 'function') {
       await team.populate('members', 'name fullName email role');
@@ -387,6 +527,12 @@ exports.removeMember = async (req, res, next) => {
       data: { team: teamObj },
     });
   } catch (error) {
+    if (error instanceof TransactionHttpError || error.status) {
+      return res.status(error.status).json({
+        success: false,
+        error: error.message,
+      });
+    }
     next(error);
   }
 };
