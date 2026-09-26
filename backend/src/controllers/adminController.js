@@ -13,54 +13,100 @@ const { generateStandingsCSV } = require('../services/csvExporter');
 
 exports.assignJudges = async (req, res, next) => {
   try {
-    const { targetPerProject = 3 } = req.body;
+    if (req.user && req.user.role !== 'organizer' && req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden: Organizer or Admin permissions required.',
+      });
+    }
 
-    const submissions = await Submission.find({ status: { $in: ['submitted', 'locked'] } });
+    const target = req.body && req.body.targetPerProject !== undefined
+      ? Number(req.body.targetPerProject)
+      : 3;
+
+    if (isNaN(target) || target <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid targetPerProject: must be a positive integer.',
+      });
+    }
+
+    const submissionFilter = { status: { $in: ['submitted', 'locked'] } };
+    if (req.body && req.body.eventId) {
+      submissionFilter.event = req.body.eventId;
+    }
+
+    const submissions = await Submission.find(submissionFilter);
     const judges = await User.find({ role: 'judge' });
 
-    if (submissions.length === 0) {
+    if (!submissions || submissions.length === 0) {
       return res.status(400).json({
         success: false,
         error: 'No submitted projects available to assign.',
       });
     }
 
-    if (judges.length === 0) {
+    if (!judges || judges.length === 0) {
       return res.status(400).json({
         success: false,
         error: 'No registered judges found in the system.',
       });
     }
 
-    // Execute greedy assignment engine
-    const { assignments, judgeLoad, totalAssigned } = solveJudgeAssignments(
-      submissions,
-      judges,
-      targetPerProject
-    );
+    // Execute constraint-satisfied assignment engine
+    let solution;
+    try {
+      solution = solveJudgeAssignments(submissions, judges, target);
+    } catch (solverError) {
+      return res.status(400).json({
+        success: false,
+        error: solverError.message || 'Unable to satisfy judge assignment constraints.',
+      });
+    }
+
+    const { assignments, judgeLoad, totalAssigned } = solution;
 
     // Clear existing uncompleted assignments to prevent duplicates
     await JudgeAssignment.deleteMany({ status: { $in: ['assigned', 'pending'] } });
 
-    // Insert new assignments
-    await JudgeAssignment.insertMany(assignments, { ordered: false }).catch(() => {});
+    // Batch-insert new assignments into MongoDB
+    let insertedAssignments = [];
+    if (assignments && assignments.length > 0) {
+      try {
+        insertedAssignments = await JudgeAssignment.insertMany(assignments, { ordered: false });
+      } catch (insertError) {
+        if (insertError.insertedDocs && insertError.insertedDocs.length > 0) {
+          insertedAssignments = insertError.insertedDocs;
+        } else if (insertError.code === 11000 || insertError.writeErrors) {
+          insertedAssignments = await JudgeAssignment.find({
+            submissionId: { $in: submissions.map((s) => s._id) },
+          });
+        } else {
+          throw insertError;
+        }
+      }
+    }
 
     // Audit log
     const ipHash = crypto.createHash('sha256').update(req.ip || '127.0.0.1').digest('hex');
     await AuditLog.create({
-      actorId: req.user._id,
-      actorRole: req.user.role,
+      actorId: req.user?._id,
+      actorRole: req.user?.role || 'organizer',
       action: 'JUDGES_ASSIGNED',
       targetResource: 'JudgeAssignment',
-      resourceId: req.user._id,
-      payload: { totalAssigned, judgeLoad },
+      resourceId: req.user?._id,
+      payload: { totalAssigned, judgeLoad, targetPerProject: target },
       ipHash,
     });
 
     return res.status(200).json({
       success: true,
       message: `Successfully assigned ${totalAssigned} judge evaluations.`,
-      data: { totalAssigned, judgeLoad },
+      data: {
+        totalAssigned,
+        judgeLoad,
+        assignments: insertedAssignments.length > 0 ? insertedAssignments : assignments,
+      },
     });
   } catch (error) {
     next(error);
