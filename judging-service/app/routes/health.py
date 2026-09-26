@@ -6,6 +6,7 @@ router = APIRouter(tags=["Health"])
 START_TIME = time.time()
 
 @router.get("/health")
+@router.get("/api/v1/health")
 def healthcheck():
     return {
         "status": "healthy",
