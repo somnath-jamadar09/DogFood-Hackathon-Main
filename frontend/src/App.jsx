@@ -5,7 +5,6 @@ import { NotificationProvider } from './context/NotificationContext';
 import { Navbar } from './components/Navbar';
 import { ProtectedRoute } from './components/ProtectedRoute';
 
-// Pages
 import { Home } from './pages/Home';
 import { Gallery } from './pages/Gallery';
 import { TeamDashboard } from './pages/TeamDashboard';
@@ -29,7 +28,6 @@ function App() {
                 <Route path="/login" element={<Login />} />
                 <Route path="/register" element={<Register />} />
 
-                {/* Participant Routes */}
                 <Route
                   path="/team"
                   element={
@@ -47,7 +45,6 @@ function App() {
                   }
                 />
 
-                {/* Judge Routes */}
                 <Route
                   path="/judging"
                   element={
@@ -57,7 +54,6 @@ function App() {
                   }
                 />
 
-                {/* Organizer Admin Routes */}
                 <Route
                   path="/admin"
                   element={
@@ -67,12 +63,10 @@ function App() {
                   }
                 />
 
-                {/* Fallback */}
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </main>
 
-            {/* Offline Footer */}
             <footer className="border-t border-border-subtle bg-surface/50 py-6 mt-16 text-center text-xs text-gray-500">
               <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
                 <span>Dogfood 2026 • Hackathon Raptors Air-Gapped Platform</span>
