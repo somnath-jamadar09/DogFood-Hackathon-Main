@@ -1,7 +1,111 @@
 import numpy as np
 import pandas as pd
-from typing import List, Dict, Any, Sequence
+from dataclasses import dataclass
+from typing import Any, Dict, List, Mapping, Sequence
 from ..models.schemas import JudgeScoreEntry, NormalizationResponse, JudgeCalibrationMetric, ProjectStanding
+
+
+@dataclass(frozen=True)
+class ScoreMatrix:
+    """Sparse multi-criteria scores in judge, submission, criterion order."""
+
+    matrix: np.ndarray
+    mask: np.ndarray
+    judge_ids: tuple[str, ...]
+    submission_ids: tuple[str, ...]
+    criterion_keys: tuple[str, ...]
+
+
+def parse_score_matrix(
+    records: Sequence[Mapping[str, Any]],
+    criterion_keys: Sequence[str],
+) -> ScoreMatrix:
+    """Convert raw score records into a deterministic ``[judge, submission, criterion]`` array."""
+    keys = tuple(str(key) for key in criterion_keys)
+    if not keys or any(not key for key in keys) or len(set(keys)) != len(keys):
+        raise ValueError("criterion_keys must contain unique, non-empty values")
+
+    parsed_records = []
+    judge_ids = set()
+    submission_ids = set()
+    seen_evaluations = set()
+    criterion_indexes = {key: index for index, key in enumerate(keys)}
+
+    for record in records:
+        if not isinstance(record, Mapping):
+            raise TypeError("Each evaluation record must be a mapping")
+
+        judge_id = _record_value(record, "judge_id", "judgeId")
+        submission_id = _record_value(record, "submission_id", "submissionId")
+        if judge_id is None or submission_id is None:
+            raise ValueError("Each evaluation requires judge_id and submission_id")
+        judge_id = str(judge_id)
+        submission_id = str(submission_id)
+        evaluation_key = (judge_id, submission_id)
+        if evaluation_key in seen_evaluations:
+            raise ValueError(f"Duplicate evaluation for judge {judge_id} and submission {submission_id}")
+        seen_evaluations.add(evaluation_key)
+        judge_ids.add(judge_id)
+        submission_ids.add(submission_id)
+
+        criterion_values = {}
+        criteria = _record_value(record, "criteria_scores", "criteriaScores") or []
+        for criterion in criteria:
+            if not isinstance(criterion, Mapping):
+                raise TypeError("Each criterion score must be a mapping")
+            key = _record_value(criterion, "key", "criteriaName", "criteria_name")
+            if key is None:
+                raise ValueError("Each criterion score requires a criterion key")
+            key = str(key)
+            if key not in criterion_indexes:
+                raise ValueError(f"Unknown criterion: {key}")
+            if key in criterion_values:
+                raise ValueError(f"Duplicate criterion {key} in evaluation")
+            score = _record_value(criterion, "score", "rawScore", "raw_score")
+            try:
+                score = float(score)
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"Invalid score for criterion {key}") from error
+            if not np.isfinite(score) or not 1.0 <= score <= 10.0:
+                raise ValueError(f"Score for criterion {key} must be between 1.0 and 10.0")
+            criterion_values[key] = score
+        parsed_records.append((judge_id, submission_id, criterion_values))
+
+    ordered_judges = tuple(sorted(judge_ids))
+    ordered_submissions = tuple(sorted(submission_ids))
+    matrix = np.full(
+        (len(ordered_judges), len(ordered_submissions), len(keys)),
+        np.nan,
+        dtype=float,
+    )
+    mask = np.zeros(matrix.shape, dtype=bool)
+    judge_indexes = {judge_id: index for index, judge_id in enumerate(ordered_judges)}
+    submission_indexes = {
+        submission_id: index for index, submission_id in enumerate(ordered_submissions)
+    }
+
+    for judge_id, submission_id, scores in parsed_records:
+        judge_index = judge_indexes[judge_id]
+        submission_index = submission_indexes[submission_id]
+        for key, score in scores.items():
+            criterion_index = criterion_indexes[key]
+            matrix[judge_index, submission_index, criterion_index] = score
+            mask[judge_index, submission_index, criterion_index] = True
+
+    return ScoreMatrix(
+        matrix=matrix,
+        mask=mask,
+        judge_ids=ordered_judges,
+        submission_ids=ordered_submissions,
+        criterion_keys=keys,
+    )
+
+
+def _record_value(record: Mapping[str, Any], *names: str) -> Any:
+    for name in names:
+        if name in record:
+            return record[name]
+    return None
 
 
 def calculate_mean(scores: Sequence[float]) -> float:

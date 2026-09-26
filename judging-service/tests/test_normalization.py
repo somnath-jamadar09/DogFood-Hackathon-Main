@@ -93,3 +93,98 @@ def test_baseline_statistics_preserve_numpy_nan_behavior_for_insufficient_sample
         assert normalization.calculate_mean([5]) == pytest.approx(5.0)
         assert np.isnan(normalization.calculate_sample_variance([5]))
         assert np.isnan(normalization.calculate_sample_std([5]))
+
+
+def _evaluation(judge_id, submission_id, scores):
+    return {
+        "judgeId": judge_id,
+        "submissionId": submission_id,
+        "criteriaScores": [
+            {"criteriaName": criterion, "rawScore": score}
+            for criterion, score in scores.items()
+        ],
+    }
+
+
+def test_parse_score_matrix_builds_complete_judge_submission_criterion_array():
+    records = [
+        _evaluation("judge-b", "submission-2", {"technical": 8.0, "impact": 7.0, "innovation": 9.0}),
+        _evaluation("judge-a", "submission-1", {"technical": 6.0, "impact": 5.0, "innovation": 7.0}),
+        _evaluation("judge-a", "submission-2", {"technical": 8.5, "impact": 8.0, "innovation": 8.5}),
+        _evaluation("judge-b", "submission-1", {"technical": 7.0, "impact": 6.0, "innovation": 8.0}),
+    ]
+
+    result = normalization.parse_score_matrix(
+        records, criterion_keys=["technical", "innovation", "impact"]
+    )
+
+    assert result.matrix.shape == (2, 2, 3)
+    assert result.judge_ids == ("judge-a", "judge-b")
+    assert result.submission_ids == ("submission-1", "submission-2")
+    assert result.criterion_keys == ("technical", "innovation", "impact")
+    assert result.matrix[0, 0].tolist() == [6.0, 7.0, 5.0]
+    assert result.matrix[1, 1].tolist() == [8.0, 9.0, 7.0]
+    assert result.mask.all()
+
+
+def test_parse_score_matrix_masks_missing_submission_evaluation_without_zero_fill():
+    records = [
+        _evaluation("judge-a", "submission-1", {"technical": 6.0, "impact": 5.0}),
+        _evaluation("judge-a", "submission-2", {"technical": 8.0, "impact": 7.0}),
+        _evaluation("judge-b", "submission-1", {"technical": 7.0, "impact": 6.0}),
+    ]
+
+    result = normalization.parse_score_matrix(records, criterion_keys=["technical", "impact"])
+
+    assert result.matrix.shape == (2, 2, 2)
+    assert not result.mask[1, 1].any()
+    assert np.isnan(result.matrix[1, 1]).all()
+    assert not np.any(result.matrix[1, 1] == 0)
+
+
+def test_parse_score_matrix_masks_missing_criterion():
+    records = [_evaluation("judge-a", "submission-1", {"technical": 8.0})]
+
+    result = normalization.parse_score_matrix(
+        records, criterion_keys=["technical", "innovation"]
+    )
+
+    assert result.mask[0, 0].tolist() == [True, False]
+    assert result.matrix[0, 0, 0] == 8.0
+    assert np.isnan(result.matrix[0, 0, 1])
+
+
+def test_parse_score_matrix_is_deterministic_for_same_logical_input():
+    records = [
+        _evaluation("judge-b", "submission-2", {"technical": 8.0}),
+        _evaluation("judge-a", "submission-1", {"technical": 6.0}),
+    ]
+
+    first = normalization.parse_score_matrix(records, criterion_keys=["technical"])
+    second = normalization.parse_score_matrix(list(reversed(records)), criterion_keys=["technical"])
+
+    assert first.judge_ids == second.judge_ids
+    assert first.submission_ids == second.submission_ids
+    assert first.criterion_keys == second.criterion_keys
+    assert np.all(
+        (first.matrix == second.matrix)
+        | (np.isnan(first.matrix) & np.isnan(second.matrix))
+    )
+    np.testing.assert_array_equal(first.mask, second.mask)
+
+
+def test_parse_score_matrix_rejects_duplicate_judge_submission_record():
+    records = [
+        _evaluation("judge-a", "submission-1", {"technical": 8.0}),
+        _evaluation("judge-a", "submission-1", {"technical": 8.0}),
+    ]
+
+    with pytest.raises(ValueError, match="Duplicate evaluation"):
+        normalization.parse_score_matrix(records, criterion_keys=["technical"])
+
+
+def test_parse_score_matrix_rejects_unknown_criterion():
+    records = [_evaluation("judge-a", "submission-1", {"technical": 8.0})]
+
+    with pytest.raises(ValueError, match="Unknown criterion"):
+        normalization.parse_score_matrix(records, criterion_keys=["impact"])
