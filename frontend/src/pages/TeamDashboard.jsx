@@ -15,7 +15,6 @@ export const TeamDashboard = () => {
   const [submissionData, setSubmissionData] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Form states
   const [createName, setCreateName] = useState('');
   const [createTrack, setCreateTrack] = useState('AI/ML');
   const [joinCodeInput, setJoinCodeInput] = useState('');
@@ -30,8 +29,7 @@ export const TeamDashboard = () => {
         setTeamData(res.data.team);
         setSubmissionData(res.data.submission);
       }
-    } catch (err) {
-      console.error(err);
+    } catch {
     } finally {
       setLoading(false);
     }
@@ -173,7 +171,6 @@ export const TeamDashboard = () => {
               </div>
             </div>
 
-            {/* Join Code Box */}
             <div className="bg-canvas border border-border-subtle p-4 rounded-xl flex items-center space-x-4">
               <div>
                 <div className="text-[10px] font-mono uppercase text-gray-400">Invite Code</div>
@@ -191,7 +188,6 @@ export const TeamDashboard = () => {
             </div>
           </div>
 
-          {/* Members List */}
           <div>
             <h3 className="text-sm font-bold uppercase tracking-wider text-gray-400 font-mono mb-4">
               Team Roster
@@ -237,7 +233,6 @@ export const TeamDashboard = () => {
             </div>
           </div>
 
-          {/* Action to Submission */}
           <div className="pt-6 border-t border-border-subtle flex flex-col sm:flex-row items-center justify-between gap-4">
             <div>
               <h4 className="text-sm font-bold text-white">Project Submission Status</h4>
@@ -259,9 +254,7 @@ export const TeamDashboard = () => {
           </div>
         </div>
       ) : (
-        /* Team Creation / Join Dual Forms */
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {/* Create Team */}
           <div className="bg-surface border border-border-subtle rounded-2xl p-6 space-y-6">
             <div className="flex items-center space-x-3 text-blue-400">
               <UserPlus className="w-6 h-6" />
@@ -313,7 +306,6 @@ export const TeamDashboard = () => {
             </form>
           </div>
 
-          {/* Join Team */}
           <div className="bg-surface border border-border-subtle rounded-2xl p-6 space-y-6">
             <div className="flex items-center space-x-3 text-emerald-400">
               <Users className="w-6 h-6" />

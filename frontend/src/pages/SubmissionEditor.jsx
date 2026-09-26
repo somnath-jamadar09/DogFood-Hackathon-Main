@@ -3,8 +3,11 @@ import { useAuth } from '../hooks/useAuth';
 import { useNotification } from '../context/NotificationContext';
 import { renderMarkdownToSafeHTML } from '../utils/markdownSanitizer';
 import api from '../services/api';
-import { Save, Lock, Upload, Eye, FileText, CheckCircle } from 'lucide-react';
+import { Save, Lock, Upload, Eye, FileText, HardDrive } from 'lucide-react';
 import { Link } from 'react-router-dom';
+
+const DRAFT_KEY = 'dogfood_sub_draft';
+const DEFAULT_MARKDOWN = `# Project Overview\n\n### What it does\nExplain the core value proposition of your project.\n\n### How we built it\nDescribe your technical architecture, models, and tools.\n\n### Challenges we ran into\nDetail technical bottlenecks and how you solved them.`;
 
 export const SubmissionEditor = () => {
   const { user } = useAuth();
@@ -14,10 +17,11 @@ export const SubmissionEditor = () => {
   const [saving, setSaving] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [hasTeam, setHasTeam] = useState(true);
+  const [localDraftSaved, setLocalDraftSaved] = useState(false);
 
-  // Form Fields
   const [title, setTitle] = useState('');
   const [tagline, setTagline] = useState('');
+  const [track, setTrack] = useState('');
   const [repoUrl, setRepoUrl] = useState('');
   const [demoUrl, setDemoUrl] = useState('');
   const [markdown, setMarkdown] = useState('');
@@ -34,19 +38,34 @@ export const SubmissionEditor = () => {
           return;
         }
 
+        setTrack(teamRes.data.team.track || '');
+
         const sub = teamRes.data.submission;
         if (sub) {
           setTitle(sub.title || '');
           setTagline(sub.tagline || '');
-          setRepoUrl(sub.repoUrl || '');
-          setDemoUrl(sub.demoUrl || '');
-          setMarkdown(sub.descriptionMarkdown || '');
-          setThumbnailPath(sub.thumbnailPath || '/uploads/default-thumbnail.webp');
+          setRepoUrl(sub.githubUrl || '');
+          setDemoUrl(sub.demoVideoUrl || '');
+          setMarkdown(sub.description || '');
+          setThumbnailPath(sub.thumbnailUrl || '/uploads/default-thumbnail.webp');
           setStatus(sub.status || 'draft');
+          localStorage.removeItem(DRAFT_KEY);
         } else {
-          setMarkdown(
-            `# Project Overview\n\n### What it does\nExplain the core value proposition of your project.\n\n### How we built it\nDescribe your technical architecture, models, and tools.\n\n### Challenges we ran into\nDetail technical bottlenecks and how you solved them.`
-          );
+          const saved = localStorage.getItem(DRAFT_KEY);
+          if (saved) {
+            try {
+              const parsed = JSON.parse(saved);
+              setTitle(parsed.title || '');
+              setTagline(parsed.tagline || '');
+              setRepoUrl(parsed.repoUrl || '');
+              setDemoUrl(parsed.demoUrl || '');
+              setMarkdown(parsed.markdown || DEFAULT_MARKDOWN);
+            } catch {
+              setMarkdown(DEFAULT_MARKDOWN);
+            }
+          } else {
+            setMarkdown(DEFAULT_MARKDOWN);
+          }
         }
       } catch (err) {
         addNotification(err.message, 'error');
@@ -57,6 +76,16 @@ export const SubmissionEditor = () => {
 
     fetchSubmission();
   }, [addNotification]);
+
+  useEffect(() => {
+    if (status === 'submitted' || status === 'locked' || loading) return;
+    const timer = setTimeout(() => {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ title, tagline, repoUrl, demoUrl, markdown }));
+      setLocalDraftSaved(true);
+      setTimeout(() => setLocalDraftSaved(false), 2500);
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [title, tagline, repoUrl, demoUrl, markdown, status, loading]);
 
   const handleSaveDraft = async () => {
     setSaving(true);
@@ -71,6 +100,7 @@ export const SubmissionEditor = () => {
       });
       if (res.success) {
         addNotification('Draft saved successfully!', 'success');
+        localStorage.removeItem(DRAFT_KEY);
       }
     } catch (err) {
       addNotification(err.message, 'error');
@@ -106,7 +136,6 @@ export const SubmissionEditor = () => {
 
     setFinalizing(true);
     try {
-      // First save current content
       await api.post('/submissions', {
         title,
         tagline,
@@ -119,6 +148,7 @@ export const SubmissionEditor = () => {
       const res = await api.post('/submissions/finalize');
       if (res.success) {
         setStatus('submitted');
+        localStorage.removeItem(DRAFT_KEY);
         addNotification('Project finalized and locked for evaluation!', 'success');
       }
     } catch (err) {
@@ -157,7 +187,6 @@ export const SubmissionEditor = () => {
 
   return (
     <div className="space-y-6 py-6">
-      {/* Top Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-border-subtle">
         <div>
           <div className="flex items-center space-x-2">
@@ -178,6 +207,12 @@ export const SubmissionEditor = () => {
         </div>
 
         <div className="flex items-center space-x-3">
+          {localDraftSaved && (
+            <span className="flex items-center space-x-1.5 text-xs text-emerald-400 font-mono">
+              <HardDrive className="w-3.5 h-3.5" />
+              <span>Draft saved locally</span>
+            </span>
+          )}
           {!isLocked && (
             <>
               <button
@@ -202,9 +237,7 @@ export const SubmissionEditor = () => {
         </div>
       </div>
 
-      {/* Dual Pane Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-        {/* Left Pane: Form & Markdown Input */}
         <div className="bg-surface border border-border-subtle rounded-2xl p-6 space-y-5">
           <h2 className="text-base font-bold text-white flex items-center space-x-2 pb-3 border-b border-border-subtle">
             <FileText className="w-4 h-4 text-blue-400" />
@@ -224,22 +257,33 @@ export const SubmissionEditor = () => {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-300 mb-1">Tagline</label>
+            <label className="block text-xs font-semibold text-gray-300 mb-1">Pitch (140 chars)</label>
             <input
               type="text"
               disabled={isLocked}
+              maxLength={140}
               value={tagline}
               onChange={(e) => setTagline(e.target.value)}
               placeholder="e.g. Autonomous air-gapped machine learning submission evaluator"
               className="w-full px-3.5 py-2 rounded-xl bg-canvas border border-border-subtle text-sm text-white focus:outline-none focus:border-blue-500 disabled:opacity-60"
             />
+            <div className="flex justify-end mt-1">
+              <span className={`text-xs font-mono ${tagline.length >= 130 ? 'text-amber-400' : 'text-gray-500'}`}>
+                {tagline.length}/140
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-300 mb-1">Competition Track</label>
+            <div className="w-full px-3.5 py-2 rounded-xl bg-canvas border border-border-subtle text-sm text-gray-400 font-mono">
+              {track || '—'}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1">
-                Repository URL
-              </label>
+              <label className="block text-xs font-semibold text-gray-300 mb-1">GitHub Repository URL</label>
               <input
                 type="text"
                 disabled={isLocked}
@@ -250,9 +294,7 @@ export const SubmissionEditor = () => {
               />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1">
-                Live Demo URL (Optional)
-              </label>
+              <label className="block text-xs font-semibold text-gray-300 mb-1">Demo Video URL (Optional)</label>
               <input
                 type="text"
                 disabled={isLocked}
@@ -264,11 +306,8 @@ export const SubmissionEditor = () => {
             </div>
           </div>
 
-          {/* Thumbnail Uploader */}
           <div>
-            <label className="block text-xs font-semibold text-gray-300 mb-1">
-              Thumbnail Cover Image
-            </label>
+            <label className="block text-xs font-semibold text-gray-300 mb-1">Thumbnail Cover Image</label>
             <div className="flex items-center space-x-4">
               <img
                 src={thumbnailPath}
@@ -276,8 +315,7 @@ export const SubmissionEditor = () => {
                 className="w-16 h-16 rounded-xl object-cover border border-border-subtle bg-surface-raised"
                 onError={(e) => {
                   e.target.onerror = null;
-                  e.target.src =
-                    'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60';
+                  e.target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Crect width='64' height='64' fill='%230f172a'/%3E%3Ctext x='50%25' y='55%25' dominant-baseline='middle' text-anchor='middle' fill='%234b5563' font-size='9' font-family='monospace'%3ENo Image%3C/text%3E%3C/svg%3E";
                 }}
               />
               {!isLocked && (
@@ -295,11 +333,8 @@ export const SubmissionEditor = () => {
             </div>
           </div>
 
-          {/* Markdown Textarea */}
           <div>
-            <label className="block text-xs font-semibold text-gray-300 mb-1">
-              Markdown Documentation
-            </label>
+            <label className="block text-xs font-semibold text-gray-300 mb-1">Markdown Documentation</label>
             <textarea
               rows={14}
               disabled={isLocked}
@@ -311,7 +346,6 @@ export const SubmissionEditor = () => {
           </div>
         </div>
 
-        {/* Right Pane: Live Rendered Preview */}
         <div className="bg-surface border border-border-subtle rounded-2xl p-6 space-y-5 sticky top-24">
           <h2 className="text-base font-bold text-white flex items-center space-x-2 pb-3 border-b border-border-subtle">
             <Eye className="w-4 h-4 text-emerald-400" />
