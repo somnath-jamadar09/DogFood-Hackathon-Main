@@ -111,36 +111,33 @@ export const Register = () => {
             </div>
           </div>
 
-          {/* Role selector */}
           <div>
             <label className="block text-xs font-semibold text-gray-300 mb-1.5">Platform Role</label>
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
                 onClick={() => setRole('participant')}
-                className={`py-2 px-3 rounded-xl border text-xs font-semibold transition-all ${
-                  role === 'participant'
+                className={`py-2 px-3 rounded-xl border text-xs font-semibold transition-all ${role === 'participant'
                     ? 'bg-blue-600/20 border-blue-500 text-blue-300'
                     : 'bg-canvas border-border-subtle text-gray-400 hover:text-white'
-                }`}
+                  }`}
               >
                 Participant
               </button>
               <button
                 type="button"
                 onClick={() => setRole('judge')}
-                className={`py-2 px-3 rounded-xl border text-xs font-semibold transition-all ${
-                  role === 'judge'
+                className={`py-2 px-3 rounded-xl border text-xs font-semibold transition-all ${role === 'judge'
                     ? 'bg-purple-600/20 border-purple-500 text-purple-300'
                     : 'bg-canvas border-border-subtle text-gray-400 hover:text-white'
-                }`}
+                  }`}
               >
                 Track Judge
               </button>
             </div>
           </div>
 
-          {/* If Judge, select tracks */}
+
           {role === 'judge' && (
             <div className="space-y-2 pt-2 border-t border-border-subtle">
               <label className="block text-xs font-semibold text-purple-300">
@@ -152,11 +149,10 @@ export const Register = () => {
                     key={t}
                     type="button"
                     onClick={() => handleTrackToggle(t)}
-                    className={`py-1.5 px-2.5 rounded-lg border text-[11px] font-medium transition-all text-left ${
-                      selectedTracks.includes(t)
+                    className={`py-1.5 px-2.5 rounded-lg border text-[11px] font-medium transition-all text-left ${selectedTracks.includes(t)
                         ? 'bg-purple-950/60 border-purple-600 text-purple-200'
                         : 'bg-canvas border-border-subtle text-gray-400'
-                    }`}
+                      }`}
                   >
                     {t}
                   </button>

@@ -38,7 +38,6 @@ export const Login = () => {
     }
   };
 
-  // Quick fill buttons for seeded test accounts
   const fillCredentials = (roleEmail) => {
     setEmail(roleEmail);
     setPassword('Raptor2026!');
@@ -99,7 +98,7 @@ export const Login = () => {
           </button>
         </form>
 
-        {/* Quick Demo Logins */}
+
         <div className="pt-4 border-t border-border-subtle">
           <div className="text-[11px] font-mono uppercase tracking-wider text-gray-400 mb-2 flex items-center space-x-1">
             <KeyRound className="w-3.5 h-3.5 text-amber-400" />
@@ -108,21 +107,21 @@ export const Login = () => {
           <div className="grid grid-cols-3 gap-2">
             <button
               type="button"
-              onClick={() => fillCredentials('organizer@raptors.local')}
+              onClick={() => fillCredentials('organizer@dogfood.local')}
               className="py-1.5 px-2 rounded-lg bg-surface-raised border border-border-subtle text-[11px] font-semibold text-gray-300 hover:text-white hover:border-gray-500 transition-colors"
             >
               Organizer
             </button>
             <button
               type="button"
-              onClick={() => fillCredentials('judge.ai@raptors.local')}
+              onClick={() => fillCredentials('judge.ai@dogfood.local')}
               className="py-1.5 px-2 rounded-lg bg-surface-raised border border-border-subtle text-[11px] font-semibold text-gray-300 hover:text-white hover:border-gray-500 transition-colors"
             >
               AI Judge
             </button>
             <button
               type="button"
-              onClick={() => fillCredentials('hacker@raptors.local')}
+              onClick={() => fillCredentials('alex@dogfood.local')}
               className="py-1.5 px-2 rounded-lg bg-surface-raised border border-border-subtle text-[11px] font-semibold text-gray-300 hover:text-white hover:border-gray-500 transition-colors"
             >
               Participant
